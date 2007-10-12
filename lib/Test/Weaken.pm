@@ -5,7 +5,7 @@ require Exporter;
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(poof);
-$VERSION = '0.000_001';
+$VERSION = '0.001_002';
 $VERSION   = eval $VERSION;
 
 # This is alpha software, not at present suitable for any purpose
@@ -82,19 +82,21 @@ sub poof {
 
     my $strong = [];
     my $ix = 0;
-    for my $strong_ref (values %$reverse) {
-      weaken($strong->[$ix++] = $strong_ref);
+    for my $ref (values %$reverse) {
+      weaken($strong->[$ix++] = $ref);
     }
 
     my $weak_count = @$weak;
     my $strong_count = @$strong;
 
-    $strong_ref = undef;
+    weaken($strong_ref);
     $reverse = undef;
     $workset = undef;
 
-    my @unfreed_strong = grep { defined $$_ } @$strong;
-    my @unfreed_weak = grep { defined $$_ } @$weak;
+    # The below will the weak references will be strengthened through copying,
+    # but it no longer matters
+    my @unfreed_strong = map { $$_ } grep { defined $$_ } @$strong;
+    my @unfreed_weak = map { $$_ } grep { defined $$_ } @$weak;
 
     return wantarray ? ($weak_count, $strong_count, \@unfreed_weak, \@unfreed_strong) :
         (@unfreed_weak + @unfreed_strong);
@@ -114,16 +116,13 @@ This is alpha software, not at present suitable for any purpose
 except reading and experimentation.  Among other issues, this
 documentation is still very inadequate.
 
-=cut
-
 =head1 SYNOPSIS
 
 Frees an object and checks that the memory was freed.
-Intended especially for objects with circular references and weakened references,
-to make sure all works as expected.
-It can also be used in situations without circular references, but unless you
-suspect a bug in Perl itself, that would be a waste of time.
-
+This module is intended for use in test scripts,
+to check that the programmer's strategy for weakening
+circular references does 
+indeed work as expected.
 
     use Test::Weaken;
 
@@ -137,12 +136,25 @@ suspect a bug in Perl itself, that would be a waste of time.
 
 =cut
 
-=head1 FUNCTIONS
+=head1 FUNCTION
 
 =head2 poof
 
 sub poof {
 }
+
+C<poof> is named in order to emphasize that the test is destructive.  C<poof> takes a subroutine reference
+as its only argument.  The subroutine should return a reference to an object.
+C<poof> frees that object, then checks each reference to ensure it has been released.
+In scalar context, it returns a true value if the memory was properly released, false otherwise.
+
+In array context, C<poof> returns a list containing the references counts from the original object and
+arrays with references to the references not freed.
+Specifically, in an array context, C<poof> returns a list with four elements:
+first, the starting count of weak references;
+second, the starting count of strong references;
+third, a reference to an array containing references to the unfreed weak references;
+fourth, a reference to an array containing references to the unfreed strong references.
 
 =cut
 

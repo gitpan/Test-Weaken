@@ -1,7 +1,5 @@
 #!perl
 
-# the example grammar in Aycock/Horspool paper
-
 use strict;
 use warnings;
 
@@ -32,7 +30,7 @@ cmp_ok($result, "==", 0, "Simple weak ref");
 
 is(
     brief_result(Test::Weaken::poof( sub { my $a = 42; my $b = \$a; $a = \$b; })),
-    "total: weak=0; strong=2; unfreed: weak=0; strong=1",
+    "total: weak=0; strong=2; unfreed: weak=0; strong=2",
     "Bad Less Simple Cycle"
 );
 
