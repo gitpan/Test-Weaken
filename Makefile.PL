@@ -1,0 +1,16 @@
+use strict;
+use warnings;
+use ExtUtils::MakeMaker;
+
+WriteMakefile(
+    NAME                => 'Test::Weaken',
+    AUTHOR              => 'Jeffrey Kegler <nospam@no.spam>',
+    VERSION_FROM        => 'lib/Test/Weaken.pm',
+    ABSTRACT_FROM       => 'lib/Test/Weaken.pm',
+    PL_FILES            => {},
+    PREREQ_PM => {
+        'Test::More' => 0,
+    },
+    dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
+    clean               => { FILES => 'Test-Weaken-*' },
+);
