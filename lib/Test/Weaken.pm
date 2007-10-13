@@ -8,7 +8,7 @@ require Exporter;
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(poof);
-$VERSION   = '0.001_004';
+$VERSION   = '0.001_005';
 $VERSION   = eval $VERSION;
 
 use warnings;
@@ -60,6 +60,7 @@ sub poof {
 
     # an array of strong references to the weak references
     my $weak = [];
+    my $strong = [];
 
     # Loop while there is work to do
     WORKSET: while (@$workset) {
@@ -84,71 +85,71 @@ sub poof {
                 next REF;
             }
 
-            # We deal only with refs to arrays, hashes and refs
-            # In particular, this implementation ignores refs to closures
-            if ( $type eq "ARRAY" or $type eq "HASH" or $type eq "REF" ) {
+            # Put it into the list of strong refs
+            push(@$strong, $rr);
 
-                # If we've handled this ref before, we're done
-                if ( defined $reverse->{ refaddr $$rr} ) {
-                    next REF;
-                }
+            # If we've followed another ref to the same place before,
+            # we're done
+            if ( defined $reverse->{ refaddr $$rr} ) {
+                next REF;
+            }
 
-                # If it's new, first add it to the hash
-                $reverse->{ refaddr $$rr} = $rr;
+            # If it's new, first add it to the hash
+            $reverse->{ refaddr $$rr} = $rr;
 
-                # If it's a reference to an array
-                if ( $type eq "ARRAY" ) {
+            # Note that  this implementation ignores refs to closures
 
-                    # Index through its elements to avoid copying any which are weak refs
-                    ELEMENT: for my $ix ( 0 .. $#$$rr ) {
+            # If it's a reference to an array
+            if ( $type eq "ARRAY" ) {
 
-                        # Obviously, no need to deal with non-existent elements
-                        next ELEMENT unless exists $$rr->[$ix];
+                # Index through its elements to avoid copying any which are weak refs
+                ELEMENT: for my $ix ( 0 .. $#$$rr ) {
 
-                        # If it's defined, put it on the follow-up list
-                        if ( defined $$rr->[$ix] ) {
-                            push( @$follow, \( $$rr->[$ix] ) );
-                        }
-                        else {
-                            # Not defined (but exists)
-                            # Set it to a number so it doesn't fool us later
-                            # when we check to see that it was freed
-                            $$rr->[$ix] = 42;
-                        }
+                    # Obviously, no need to deal with non-existent elements
+                    next ELEMENT unless exists $$rr->[$ix];
+
+                    # If it's defined, put it on the follow-up list
+                    if ( defined $$rr->[$ix] ) {
+                        push( @$follow, \( $$rr->[$ix] ) );
                     }
-                    next REF;
-                }
-
-                # If it's a reference to a hash
-                if ( $type eq "HASH" ) {
-
-                    # Iterate through the keys to avoid copying any values which are weak refs
-                    for my $ix ( keys %$$rr ) {
-
-                        # If it's defined, put it on the follow-up list
-                        if ( defined $$rr->{$ix} ) {
-                            push( @$follow, \( $$rr->{$ix} ) );
-                        }
-                        else {
-                            # Hash entry exists but is undef
-                            # Set it to a number so it doesn't fool us later
-                            # when we check to see that it was freed
-                            $$rr->{$ix} = 42;
-                        }
+                    else {
+                        # Not defined (but exists)
+                        # Set it to a number so it doesn't fool us later
+                        # when we check to see that it was freed
+                        $$rr->[$ix] = 42;
                     }
-                    next REF;
                 }
+                next REF;
+            }
 
-                # If it's a reference to a reference,
-                # put a reference to the reference to a reference (whew!)
-                # on the follow up list
-                if ( $type eq "REF" ) {
-                    push( @$follow, \$$$rr );
+            # If it's a reference to a hash
+            if ( $type eq "HASH" ) {
+
+                # Iterate through the keys to avoid copying any values which are weak refs
+                for my $ix ( keys %$$rr ) {
+
+                    # If it's defined, put it on the follow-up list
+                    if ( defined $$rr->{$ix} ) {
+                        push( @$follow, \( $$rr->{$ix} ) );
+                    }
+                    else {
+                        # Hash entry exists but is undef
+                        # Set it to a number so it doesn't fool us later
+                        # when we check to see that it was freed
+                        $$rr->{$ix} = 42;
+                    }
                 }
+                next REF;
+            }
 
-            }    # if (
+            # If it's a reference to a reference,
+            # put a reference to the reference to a reference (whew!)
+            # on the follow up list
+            if ( $type eq "REF" ) {
+                push( @$follow, \$$$rr );
+            }
 
-        }    # REF
+        } # REF
 
         # Replace the current work list with the items we scheduled
         # for follow up
@@ -159,10 +160,8 @@ sub poof {
     # We created a array of weak ref-refs above, now do the same for
     # the strong ref-refs, and weaken the first reference so the array
     # of strong references does not affect the test;
-    my $strong = [];
-    my $ix     = 0;
-    for my $ref ( values %$reverse ) {
-        weaken( $strong->[ $ix++ ] = $ref );
+    for my $rr (@$strong) {
+        weaken( $rr );
     }
 
     # Get the original counts for weak and strong references

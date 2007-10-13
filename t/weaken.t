@@ -29,7 +29,7 @@ cmp_ok( $result, "==", 0, "Simple weak ref" );
 is( brief_result(
         Test::Weaken::poof( sub { my $a = 42; my $b = \$a; $a = \$b; } )
     ),
-    "total: weak=0; strong=2; unfreed: weak=0; strong=2",
+    "total: weak=0; strong=3; unfreed: weak=0; strong=3",
     "Bad Less Simple Cycle"
 );
 
@@ -53,7 +53,7 @@ is( brief_result(
             }
         )
     ),
-    "total: weak=0; strong=6; unfreed: weak=0; strong=2",
+    "total: weak=0; strong=9; unfreed: weak=0; strong=5",
     "Bad Complicated Cycle"
 );
 
@@ -68,7 +68,7 @@ is( brief_result(
             }
         )
     ),
-    "total: weak=1; strong=6; unfreed: weak=0; strong=0",
+    "total: weak=1; strong=8; unfreed: weak=0; strong=0",
     "Fixed Complicated Cycle"
 );
 

@@ -40,17 +40,17 @@ sub stein_w2 {
 }
 
 is( brief_result( Test::Weaken::poof(\&stein_1) ),
-    "total: weak=0; strong=4; unfreed: weak=0; strong=4",
+    "total: weak=0; strong=7; unfreed: weak=0; strong=7",
     "Stein's test"
 );
 
 is( brief_result( Test::Weaken::poof(\&stein_w1) ),
-    "total: weak=1; strong=4; unfreed: weak=0; strong=0",
+    "total: weak=1; strong=6; unfreed: weak=0; strong=2",
     "Stein's test weakened once"
 );
 
 is( brief_result( Test::Weaken::poof(\&stein_w2) ),
-    "total: weak=2; strong=4; unfreed: weak=0; strong=0",
+    "total: weak=2; strong=5; unfreed: weak=0; strong=0",
     "Stein's test weakened twice"
 );
 
