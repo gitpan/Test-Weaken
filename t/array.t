@@ -24,7 +24,6 @@ my $text = "Starting counts: w=$wc  s=$sc\nUnfreed counts: w=" . scalar @$wa . "
 # names for the references, so checking the dump does not depend
 # on the specific hex value of locations
 my %name;
-my %ref_number;
 
 sub name {
     my $r = shift;
@@ -39,13 +38,14 @@ sub give_name {
     my $type = reftype $r;
     my $prefix = "r";
     if ($type eq "REF") {
-        $name{$r} = $prefix . $ref_number{$prefix}++;
+	my $number = $$r->[1];
+        $name{$r} = $prefix . $number;
 	give_name($$r);
 	return;
     }
     if ($type eq "ARRAY") {
 	$prefix = "a";
-        $name{$r} = $prefix . $ref_number{$prefix}++;
+        $name{$r} = $prefix . $r->[1];
 	return;
     }
 }
@@ -54,13 +54,15 @@ STRONG: for (my $ix = 0; $ix <= $#$sa; $ix++) {
     give_name($sa->[$ix]);
 }
 
+my @unfreed_text;
+
 for (my $ix = 0; $ix <= $#$sa; $ix++) {
     my $r = $sa->[$ix];
-    $text .= "Unfreed strong ref $ix: " .
+    my $unfreed_line .= "Unfreed strong ref: " .
 	name($r) . " => ";
     my $type = reftype $r;
     if ($type eq "REF") {
- 	$text .=
+ 	$unfreed_line .=
 	    "". name($$r) . " == " .
 	    "[ ".
 	    join(", ",
@@ -69,7 +71,7 @@ for (my $ix = 0; $ix <= $#$sa; $ix++) {
 	    ) .
 	    " ]";
     } elsif ($type eq "ARRAY") {
- 	$text .=
+ 	$unfreed_line .=
 	    "[ ".
 	    join(", ",
 		map { my $t = reftype $_; (defined $t and $t eq "REF") ? name($_) : $_ }
@@ -77,31 +79,33 @@ for (my $ix = 0; $ix <= $#$sa; $ix++) {
 	    ) .
 	    " ]";
     } else {
- 	$text .= $type;
+ 	$unfreed_line .= $type;
     }
-    $text .= "\n";
+    push(@unfreed_text, $unfreed_line);
 }
 
 for (my $ix = 0; $ix <= $#$wa; $ix++) {
     my $r = $wa->[$ix];
-    $text .= "Unfreed weak   ref $ix:" .
+    my $unfreed_line .= "Unfreed weak   ref:" .
 	" ". name($r) . " => " .
 	name($$r) . " == " .
 	"[ ".
 	join(", ",
 	    map { my $t = reftype $_; (defined $t and $t eq "REF") ? name($_) : $_ }
 	    @$$r)
-	. " ]" .
-	"\n";
+	. " ]";
+    push(@unfreed_text, $unfreed_line);
 }
+
+$text .= join("\n", sort @unfreed_text) . "\n";
 
 is($text, <<'EOS', "Dump of unfreed arrays");
 Starting counts: w=2  s=4
 Unfreed counts: w=2  s=4
-Unfreed strong ref 0: r0 => a0 == [ r1, 711, r1 ]
-Unfreed strong ref 1: a1 => [ r0, 42, r0 ]
-Unfreed strong ref 2: r1 => a1 == [ r0, 42, r0 ]
-Unfreed strong ref 3: a0 => [ r1, 711, r1 ]
-Unfreed weak   ref 0: r1 => a1 == [ r0, 42, r0 ]
-Unfreed weak   ref 1: r0 => a0 == [ r1, 711, r1 ]
+Unfreed strong ref: a42 => [ r711, 42, r711 ]
+Unfreed strong ref: a711 => [ r42, 711, r42 ]
+Unfreed strong ref: r42 => a42 == [ r711, 42, r711 ]
+Unfreed strong ref: r711 => a711 == [ r42, 711, r42 ]
+Unfreed weak   ref: r42 => a42 == [ r711, 42, r711 ]
+Unfreed weak   ref: r711 => a711 == [ r42, 711, r42 ]
 EOS
