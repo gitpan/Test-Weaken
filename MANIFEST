@@ -8,3 +8,4 @@ t/00-load.t
 t/stein.t
 t/weaken.t
 t/array.t
+t/synopsis.t

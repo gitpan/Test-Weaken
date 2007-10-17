@@ -8,7 +8,7 @@ require Exporter;
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(poof);
-$VERSION   = '0.001_005';
+$VERSION   = '0.001_006';
 $VERSION   = eval $VERSION;
 
 use warnings;
@@ -28,19 +28,19 @@ testing both weak and strong references, but for different reasons.
 
 In dealing with weak references, any copy strengthens it, which is
 disastrous for the accuracy of this test.  Copying is difficult to
-avoid because things a lot of useful Perl ops copy their arguments
-implicitly.  Creating strong refs to the weak refs and not directly
-manipulating the weak refs, keeps them weak.
+avoid because a lot of useful Perl constructs copy their arguments
+implicitly.  Creating strong refs to the weak refs avoids directly
+manipulating the weak refs, ensuring they stay weak.
 
 In dealing with strong references, I also need references to
 references, but for a different reason.  In keeping the strong
 references around to test that they go to undefined when released,
-there's a Heisenberg paradox (or a chicken-and-egg situation, for
-the less pretentious).  As long as there is an unweakened reference,
+there's a Heisenberg paradox or, for the less pretentious, a chicken-and-egg situation.
+As long as there is an unweakened reference,
 the memory will not be freed.  The solution?  Create references to
 the strong references, and before the test, weaken the first layer
 of references.  The weak refs will allow their strong refs to be
-freed, on one hand, but the undefined of the strong refs can still
+freed, on one hand, but the defined-ness of the strong refs can still
 be tested via the weak refs.
 
 =end
@@ -49,7 +49,10 @@ be tested via the weak refs.
 
 # See POD, below
 sub poof {
+
+    # test closure to see that it is a sub ref?
     my $closure    = shift;
+    # and test base_ref to see that it is a ref?
     my $base_ref = $closure->();
 
     # reverse hash -- maps strong ref address back to a reference to the reference
@@ -76,6 +79,9 @@ sub poof {
             # If for some reason it's not a reference,
             # (bad return from the argument subroutine?)
             # nothing to do.
+            #
+            # Probably I should croak() here
+            #
             next REF unless defined $type;
 
             # We push weak refs into a list, then we're done.
@@ -222,11 +228,15 @@ indeed work as expected.
     my ($weak_count, $strong_count, $weak_unfreed, $strong_unfreed)
         = Test::Weaken::poof( $test );
 
-    print scalar @$weak_unfreed, " of $weak_count weak references freed\n";
-    print scalar @$strong_unfreed, " of $strong_count strong references freed\n";
+    print scalar @$weak_unfreed,
+        " of $weak_count weak references freed\n";
+    print scalar @$strong_unfreed,
+        " of $strong_count strong references freed\n";
 
-    print "Weak unfreed references: ", join(" ", map { "".$_ } @$weak_unfreed), "\n";
-    print "Strong unfreed references: ", join(" ", map { "".$_ } @$strong_unfreed), "\n";
+    print "Weak unfreed references: ",
+        join(" ", map { "".$_ } @$weak_unfreed), "\n";
+    print "Strong unfreed references: ",
+        join(" ", map { "".$_ } @$strong_unfreed), "\n";
 
 C<Test::Weaken> is intended for testing and debugging, rather than use in production code.
 
@@ -238,17 +248,15 @@ By default, C<Test::Weaken> exports nothing.  Optionally, C<poof> may be exporte
 
 =head1 FUNCTION
 
-=head2 poof
-
-poof( CLOSURE )
+=head2 poof( CLOSURE )
 
 C<poof> takes a subroutine reference as its only argument.
-The subroutine should return a reference to the object to be tested.
-To avoid false negatives, the subroutine should be anonymous.
-C<poof> frees that object, then checks each reference to ensure it has been released.
+The subroutine should construct the the object to be tested
+and return a reference to it.
+C<poof> frees that object, then checks every reference in it to ensure that all references were released.
 In scalar context, it returns a true value if the memory was properly released, false otherwise.
 
-In array context, C<poof> returns a list containing the references counts from the original object and
+In array context, C<poof> returns counts of the references in the original object and
 arrays with references to the references not freed.
 Specifically, in an array context, C<poof> returns a list with four elements:
 first, the starting count of weak references;
@@ -256,19 +264,18 @@ second, the starting count of strong references;
 third, a reference to an array containing references to the unfreed weak references;
 fourth, a reference to an array containing references to the unfreed strong references.
 
-C<poof> is named in order to emphasize that the test is destructive.
-Its way of accepting the reference to be tested --
-requiring that its argument be a subroutine reference which returns the reference to be tested --
-may seem roundabout.
-In fact, it turned out to be easiest, because the reference to be tested must not have any strong
-references to it from outside.
-If there is an unnoticed, extra, strong reference, a false negative results.
-Avoiding strong references from the calling environment turns out to be very tricky to do,
-and when I tried to pass references directly,
-I spent most of my time weeding out false negatives.
-Having the argument be returned from a subroutine which goes out of existence the moment it
-returns, turns out to be the easiest way to guarantee that the only strong references to that
-argument are internal.
+The name C<poof> is intended the programmer that the test is destructive.
+C<poof>'s way of obtaining the reference to be tested may seem roundabout.
+In fact, the indirect method turns out to be easiest.
+The reference to be tested must not have any strong references to it from outside.
+One way or another,
+some craft is required for the calling environment to create and pass an object
+without holding any reference to it.
+Any mistake produces a false negative,
+one which is quite difficult to distinguish from the real one.
+The direct approach turns out to cost more trouble than it saves.
+It is easier to ensure a reference is not referred to from outside C<poof>,
+if the reference comes from a subroutine argument.
 
 =cut
 
