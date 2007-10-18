@@ -21,7 +21,9 @@ sub brief_result {
 my $result = Test::Weaken::poof(
     sub {
         my $a = [];
-        weaken( my $b = [] );
+        my $b = \$a ;
+        weaken( my $c = \$a);
+        $c;
     }
 );
 cmp_ok( $result, "==", 0, "Simple weak ref" );

@@ -8,12 +8,13 @@ require Exporter;
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(poof);
-$VERSION   = '0.001_007';
+$VERSION   = '0.001_008';
 $VERSION   = eval $VERSION;
 
 use warnings;
 use strict;
 
+use Carp;
 use Scalar::Util qw(refaddr reftype isweak weaken);
 
 =begin Implementation:
@@ -23,25 +24,26 @@ free the memory, and check them.  If the memory is free, they'll
 be undefined.
 
 References to be tested are kept as references to references.  For
-convenience, I will call these ref-refs.  They're necessary for both
-testing both weak and strong references, but for different reasons.
+convenience, I will call these ref-refs.  They're necessary for
+testing both weak and strong references.
 
-In dealing with weak references, any copy strengthens it, which is
-disastrous for the accuracy of this test.  Copying is difficult to
-avoid because a lot of useful Perl constructs copy their arguments
-implicitly.  Creating strong refs to the weak refs avoids directly
-manipulating the weak refs, ensuring they stay weak.
+If you copy a weak reference it strengthens it.  There may be good
+reasons for that "feature", but for this this test it's a big
+problem.  Copying is difficult to avoid because a lot of useful
+Perl constructs copy their arguments implicitly.  Creating strong
+refs to the weak refs avoids directly manipulating the weak refs,
+ensuring they stay weak.
 
 In dealing with strong references, I also need references to
 references, but for a different reason.  In keeping the strong
 references around to test that they go to undefined when released,
-there's a Heisenberg paradox or, for the less pretentious, a chicken-and-egg situation.
-As long as there is an unweakened reference,
-the memory will not be freed.  The solution?  Create references to
-the strong references, and before the test, weaken the first layer
-of references.  The weak refs will allow their strong refs to be
-freed, on one hand, but the defined-ness of the strong refs can still
-be tested via the weak refs.
+there's a Heisenberg paradox or, for the less pretentious, a
+chicken-and-egg situation.  As long as there is an unweakened
+reference, the memory will not be freed.  The solution?  Create
+references to the strong references, and before the test, weaken
+the first layer of references.  The weak refs will allow their
+strong refs to be freed, but the defined-ness of the strong refs
+can still be tested via the weak refs.
 
 =end
 
@@ -50,10 +52,13 @@ be tested via the weak refs.
 # See POD, below
 sub poof {
 
-    # test closure to see that it is a sub ref?
     my $closure    = shift;
-    # and test base_ref to see that it is a ref?
+    my $type = reftype $closure;
+    croak("poof() argument must be code ref") unless $type eq "CODE";
+
     my $base_ref = $closure->();
+    $type = ref $base_ref;
+    carp("poof() argument did not return a reference") unless $type;
 
     # reverse hash -- maps strong ref address back to a reference to the reference
     my $reverse = {};
@@ -68,7 +73,7 @@ sub poof {
     # Loop while there is work to do
     WORKSET: while (@$workset) {
 
-        # The "follow-up" array, which hold those ref-refs to be 
+        # The "follow-up" array, which holds those ref-refs to be 
         # be worked on in the next pass.
         my $follow = [];
 
@@ -76,12 +81,7 @@ sub poof {
         REF: for my $rr (@$workset) {
             my $type = reftype $$rr;
 
-            # If for some reason it's not a reference,
-            # (bad return from the argument subroutine?)
-            # nothing to do.
-            #
-            # Probably I should croak() here
-            #
+            # If it's not a reference, nothing to do.
             next REF unless defined $type;
 
             # We push weak refs into a list, then we're done.
@@ -96,19 +96,20 @@ sub poof {
 
             # If we've followed another ref to the same place before,
             # we're done
-            if ( defined $reverse->{ refaddr $$rr} ) {
+            if ( defined $reverse->{ refaddr $$rr } ) {
                 next REF;
             }
 
             # If it's new, first add it to the hash
-            $reverse->{ refaddr $$rr} = $rr;
+            $reverse->{ refaddr $$rr } = $rr;
 
-            # Note that  this implementation ignores refs to closures
+            # Note that this implementation ignores refs to closures
 
             # If it's a reference to an array
             if ( $type eq "ARRAY" ) {
 
-                # Index through its elements to avoid copying any which are weak refs
+                # Index through its elements to avoid
+                # copying any which are weak refs
                 ELEMENT: for my $ix ( 0 .. $#$$rr ) {
 
                     # Obviously, no need to deal with non-existent elements
@@ -163,14 +164,13 @@ sub poof {
 
     }    # WORKSET
 
-    # We created a array of weak ref-refs above, now do the same for
-    # the strong ref-refs, and weaken the first reference so the array
-    # of strong references does not affect the test;
+    # For the strong ref-refs, weaken the first reference so the array
+    # of strong references does not affect the test
     for my $rr (@$strong) {
         weaken( $rr );
     }
 
-    # Get the original counts for weak and strong references
+    # Record the original counts of weak and strong references
     my $weak_count   = @$weak;
     my $strong_count = @$strong;
 
@@ -250,32 +250,37 @@ By default, C<Test::Weaken> exports nothing.  Optionally, C<poof> may be exporte
 
 =head2 poof( CLOSURE )
 
-C<poof> takes a subroutine reference as its only argument.
-The subroutine should construct the the object to be tested
-and return a reference to it.
-C<poof> frees that object, then checks every reference in it to ensure that all references were released.
-In scalar context, it returns a true value if the memory was properly released, false otherwise.
+C<poof> takes a subroutine reference as its only argument.  The
+subroutine should construct the the object to be tested and return
+a reference to it.  C<poof> frees that object, then checks every
+reference in it to ensure that all references were released.  In
+scalar context, it returns a true value if the memory was properly
+released, false otherwise.
 
-In array context, C<poof> returns counts of the references in the original object and
-arrays with references to the references not freed.
-Specifically, in an array context, C<poof> returns a list with four elements:
-first, the starting count of weak references;
-second, the starting count of strong references;
-third, a reference to an array containing references to the unfreed weak references;
-fourth, a reference to an array containing references to the unfreed strong references.
+In array context, C<poof> returns counts of the references in the
+original object and arrays with references to the references not
+freed.  Specifically, in an array context, C<poof> returns a list
+with four elements: first, the starting count of weak references;
+second, the starting count of strong references; third, a reference
+to an array containing references to the unfreed weak references;
+fourth, a reference to an array containing references to the unfreed
+strong references.
 
-The name C<poof> is intended the programmer that the test is destructive.
-C<poof>'s way of obtaining the reference to be tested may seem roundabout.
-In fact, the indirect method turns out to be easiest.
-The reference to be tested must not have any strong references to it from outside.
-One way or another,
-some craft is required for the calling environment to create and pass an object
-without holding any reference to it.
-Any mistake produces a false negative,
-one which is quite difficult to distinguish from the real one.
-The direct approach turns out to cost more trouble than it saves.
-It is easier to ensure a reference is not referred to from outside C<poof>,
-if the reference comes from a subroutine argument.
+The name C<poof> was intended to warn the programmer that the test
+is destructive.  I originally called the main subroutine C<destroy>,
+but that choice seemed unfortunate because of similarities to
+C<DESTROY>, a name reserved for object destructors.
+
+C<poof>'s way of obtaining the reference to be tested may seem
+roundabout.  In fact, the indirect method turns out to be easiest.
+The reference to be tested must not have any strong references to
+it from outside.  One way or another, some craft is required for
+the calling environment to create and pass an object without holding
+any reference to it.  Any mistake produces a false negative, one
+which is quite difficult to distinguish from a real negative.  The
+direct approach turns out to cost more trouble than it saves.  It
+is easier to ensure that an object does not have strong references
+from outside of it, if it originated inside a subroutine.
 
 =cut
 
@@ -342,7 +347,8 @@ C<Devel::Leak> also covers similar ground, although it requires Perl
 to be compiled with
 C<-DDEBUGGING> in order to work.
 Devel::Cycle looks inside closures
-if PadWalker is present, and I may enhance this module to do likewise.
+if PadWalker is present, a feature C<Test::Weaken> does not
+have at present.
 
 =head1 ACKNOWLEDGEMENTS
 
