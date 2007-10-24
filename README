@@ -1,8 +1,8 @@
 Test-Weaken
 
-This is alpha software, not at present suitable for any purpose
-except reading and experimentation.  Among other issues, this
-documentation is still very inadequate.
+This is beta software.  Be careful.  Note that Test::Weaken is
+primarily targeted to testing and debugging in any case, not to
+production environments.
 
 INSTALLATION
 
@@ -16,7 +16,8 @@ To install this module, run the following commands:
 
 SUPPORT AND DOCUMENTATION
 
-After installing, you can find documentation for this module with the perldoc command.
+After installing, you can find documentation for this module with
+the perldoc command.
 
     perldoc Test::Weaken
 
@@ -38,5 +39,5 @@ COPYRIGHT AND LICENCE
 
 Copyright (C) 2007 Jeffrey Kegler
 
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
+This program is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.

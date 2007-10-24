@@ -1,14 +1,15 @@
 package Test::Weaken;
 
-# This is alpha software, not at present suitable for any purpose
-# except reading and experimentation
+# This is beta software.  Be careful.  Note that Test::Weaken is
+# primarily targeted to testing and debugging in any case, not to
+# production environments.
 
 use vars qw(@ISA @EXPORT_OK $VERSION);
 require Exporter;
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(poof);
-$VERSION   = '0.001_008';
+$VERSION   = '0.001_009';
 $VERSION   = eval $VERSION;
 
 use warnings;
@@ -201,19 +202,18 @@ Test::Weaken - Test for leaks after weakening of circular references
 
 =head1 VERSION
 
-Alpha Version
+Beta Version
 
-This is alpha software, not at present suitable for any purpose
-except reading and experimentation.  Among other issues, this
-documentation is still very inadequate.
+This is beta software.  Be careful.  Note that Test::Weaken is
+primarily targeted to testing and debugging in any case, not to
+production environments.
 
 =head1 SYNOPSIS
 
-Frees an object and checks that the memory was freed.
-This module is intended for use in test scripts,
-to check that the programmer's strategy for weakening
-circular references does 
-indeed work as expected.
+Frees an object and checks that the memory was freed.  This module
+is intended for use in test scripts, to check that the programmer's
+strategy for weakening circular references does indeed work as
+expected.
 
     use Test::Weaken qw(poof);
 
@@ -289,13 +289,12 @@ from outside of it, if it originated inside a subroutine.
 This module does not look inside code references.
 
 This module assumes the object returned from the subroutine is
-self-contained, that is, that there are no references to outside memory.
-If there are, bad things will happen.
-Most seriously, to distinguish C<undef>'s in the
-original data from those which result from freeing of memory, C<Test::Weaken>
-overwrites them with the number 42.
-Less, the results reported by C<Test::Weaken> will include the outside
-memory, probably not be what you wanted.
+self-contained, that is, that there are no references to outside
+memory.  If there are, bad things will happen.  Most seriously, to
+distinguish C<undef>'s in the original data from those which result
+from freeing of memory, C<Test::Weaken> overwrites them with the
+number 42.  Less, the results reported by C<Test::Weaken> will
+include the outside memory, probably not be what you wanted.
 
 =head1 AUTHOR
 
@@ -305,11 +304,11 @@ Jeffrey Kegler
 
 None known at present, but see B<LIMITATIONS>.
 
-Please report any bugs or feature requests to
-C<bug-test-weaken at rt.cpan.org>, or through the web interface at
-L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Test-Weaken>.
-I will be notified, and then you'll automatically be notified of progress on
-your bug as I make changes.
+Please report any bugs or feature requests to C<bug-test-weaken at
+rt.cpan.org>, or through the web interface at
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Test-Weaken>.  I
+will be notified, and then you'll automatically be notified of
+progress on your bug as I make changes.
 
 =head1 SUPPORT
 
@@ -341,28 +340,25 @@ L<http://search.cpan.org/dist/Test-Weaken>
 
 =head1 SEE ALSO
 
-Potential users will want to compare C<Test::Memory::Cycle>
-and C<Devel::Cycle>, which examine existing structures non-destructively.
-C<Devel::Leak> also covers similar ground, although it requires Perl
-to be compiled with
-C<-DDEBUGGING> in order to work.
-Devel::Cycle looks inside closures
-if PadWalker is present, a feature C<Test::Weaken> does not
-have at present.
+Potential users will want to compare C<Test::Memory::Cycle> and
+C<Devel::Cycle>, which examine existing structures non-destructively.
+C<Devel::Leak> also covers similar ground, although it requires
+Perl to be compiled with C<-DDEBUGGING> in order to work.  Devel::Cycle
+looks inside closures if PadWalker is present, a feature C<Test::Weaken>
+does not have at present.
 
 =head1 ACKNOWLEDGEMENTS
 
-Thanks to jettero, Juerd and perrin of 
-Perlmonks for their advice.
-Thanks also to Lincoln Stein (developer of C<Devel::Cycle>)
-for test cases and other ideas.
+Thanks to jettero, Juerd and perrin of Perlmonks for their advice.
+Thanks also to Lincoln Stein (developer of C<Devel::Cycle>) for
+test cases and other ideas.
 
 =head1 COPYRIGHT & LICENSE
 
 Copyright 2007 Jeffrey Kegler, all rights reserved.
 
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
+This program is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
 
 =cut
 
@@ -374,5 +370,3 @@ under the same terms as Perl itself.
 #   fill-column: 100
 # End:
 # vim: expandtab shiftwidth=4:
-
-=head1 NAME
