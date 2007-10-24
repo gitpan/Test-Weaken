@@ -9,7 +9,7 @@ require Exporter;
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(poof);
-$VERSION   = '0.001_009';
+$VERSION   = '0.002001';
 $VERSION   = eval $VERSION;
 
 use warnings;
@@ -21,24 +21,24 @@ use Scalar::Util qw(refaddr reftype isweak weaken);
 =begin Implementation:
 
 The basic strategy: get a list of all the references, attempt to
-free the memory, and check them.  If the memory is free, they'll
-be undefined.
+free the memory, and check the references.  If the memory is free,
+they'll be undefined.
 
 References to be tested are kept as references to references.  For
 convenience, I will call these ref-refs.  They're necessary for
 testing both weak and strong references.
 
-If you copy a weak reference it strengthens it.  There may be good
-reasons for that "feature", but for this this test it's a big
-problem.  Copying is difficult to avoid because a lot of useful
-Perl constructs copy their arguments implicitly.  Creating strong
-refs to the weak refs avoids directly manipulating the weak refs,
-ensuring they stay weak.
+If you copy a weak reference, the result is a strong reference.
+There may be good reasons for it, but that behavior is a big problem
+for this module.  Copying is difficult to avoid because a lot of
+useful Perl constructs copy their arguments implicitly.  Creating
+strong refs to the weak refs allows the code to avoid directly
+manipulating the weak refs, ensuring they stay weak.
 
 In dealing with strong references, I also need references to
 references, but for a different reason.  In keeping the strong
 references around to test that they go to undefined when released,
-there's a Heisenberg paradox or, for the less pretentious, a
+there's a Heisenberg paradox or, less pretentiously, a
 chicken-and-egg situation.  As long as there is an unweakened
 reference, the memory will not be freed.  The solution?  Create
 references to the strong references, and before the test, weaken
@@ -278,9 +278,7 @@ it from outside.  One way or another, some craft is required for
 the calling environment to create and pass an object without holding
 any reference to it.  Any mistake produces a false negative, one
 which is quite difficult to distinguish from a real negative.  The
-direct approach turns out to cost more trouble than it saves.  It
-is easier to ensure that an object does not have strong references
-from outside of it, if it originated inside a subroutine.
+direct approach turns out to cost more trouble than it saves.
 
 =cut
 
@@ -289,12 +287,14 @@ from outside of it, if it originated inside a subroutine.
 This module does not look inside code references.
 
 This module assumes the object returned from the subroutine is
-self-contained, that is, that there are no references to outside
-memory.  If there are, bad things will happen.  Most seriously, to
-distinguish C<undef>'s in the original data from those which result
+self-contained, that is, that there are no references to
+memory outside the object to be tested.
+If there are, the results will be hard to interpret, because the
+test assumes all referenced memory to should be freed.
+Additionally, the unfreed memory will be altered.
+To distinguish C<undef>'s in the original data from those which result
 from freeing of memory, C<Test::Weaken> overwrites them with the
-number 42.  Less, the results reported by C<Test::Weaken> will
-include the outside memory, probably not be what you wanted.
+number 42.
 
 =head1 AUTHOR
 
