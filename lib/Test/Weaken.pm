@@ -4,12 +4,11 @@ package Test::Weaken;
 # primarily targeted to testing and debugging in any case, not to
 # production environments.
 
-use vars qw(@ISA @EXPORT_OK $VERSION);
 require Exporter;
 
-@ISA       = qw(Exporter);
-@EXPORT_OK = qw(poof);
-$VERSION   = '0.002001';
+our @ISA       = qw(Exporter);
+our @EXPORT_OK = qw(poof);
+our $VERSION   = '0.002002';
 $VERSION   = eval $VERSION;
 
 use warnings;
@@ -46,7 +45,7 @@ the first layer of references.  The weak refs will allow their
 strong refs to be freed, but the defined-ness of the strong refs
 can still be tested via the weak refs.
 
-=end
+=end Implementation:
 
 =cut
 

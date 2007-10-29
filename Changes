@@ -4,3 +4,9 @@ Revision history for Test-Weaken
 	Various, alpha versions,
 	beginning on the above date
 
+0.002001    Thu Oct 25 08:49:00 EDT 2007
+	First beta version
+
+0.002002    Sun Oct 28 19:43:54 EDT 2007
+	Fixed POD
+
