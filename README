@@ -1,8 +1,6 @@
 Test-Weaken
 
-This is beta software.  Be careful.  Note that Test::Weaken is
-primarily targeted to testing and debugging in any case, not to
-production environments.
+Test that freed references are, indeed, freed
 
 INSTALLATION
 
@@ -12,7 +10,6 @@ To install this module, run the following commands:
     make
     make test
     make install
-
 
 SUPPORT AND DOCUMENTATION
 
@@ -37,7 +34,7 @@ You can also look for information at:
 
 COPYRIGHT AND LICENCE
 
-Copyright (C) 2007 Jeffrey Kegler
+Copyright (C) 2007-2008 Jeffrey Kegler
 
 This program is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself.
+it under the same terms as Perl 5.10.

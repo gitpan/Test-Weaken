@@ -25,7 +25,7 @@ my $code = <CODE>;
 
 # remove stuff before and after the SYNOPSIS
 $code =~ s/.*^=head1\s*SYNOPSIS\s*$//xms;
-$code =~ s/^=cut.*\z//xms;
+$code =~ s/^=head1.*\z//xms;
 
 # remove POD text
 $code =~ s/^\S[^\n]*$//xmsg;

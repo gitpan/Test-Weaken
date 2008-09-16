@@ -1,14 +1,10 @@
 package Test::Weaken;
 
-# This is beta software.  Be careful.  Note that Test::Weaken is
-# primarily targeted to testing and debugging in any case, not to
-# production environments.
-
 require Exporter;
 
 our @ISA       = qw(Exporter);
 our @EXPORT_OK = qw(poof);
-our $VERSION   = '0.002002';
+our $VERSION   = '0.002003';
 $VERSION   = eval $VERSION;
 
 use warnings;
@@ -123,7 +119,11 @@ sub poof {
                         # Not defined (but exists)
                         # Set it to a number so it doesn't fool us later
                         # when we check to see that it was freed
-                        $$rr->[$ix] = 42;
+                        #
+                        # Actually, I think this is unnecessary.
+                        # Only references can fool us, and if it's undef
+                        # it's not a reference.
+                        # $$rr->[$ix] = 42;
                     }
                 }
                 next REF;
@@ -143,7 +143,11 @@ sub poof {
                         # Hash entry exists but is undef
                         # Set it to a number so it doesn't fool us later
                         # when we check to see that it was freed
-                        $$rr->{$ix} = 42;
+                        #
+                        # Actually, I think this is unnecessary.
+                        # Only references can fool us, and if it's undef
+                        # it's not a reference.
+                        # $$rr->{$ix} = 42;
                     }
                 }
                 next REF;
@@ -197,22 +201,9 @@ sub poof {
 
 =head1 NAME
 
-Test::Weaken - Test for leaks after weakening of circular references
-
-=head1 VERSION
-
-Beta Version
-
-This is beta software.  Be careful.  Note that Test::Weaken is
-primarily targeted to testing and debugging in any case, not to
-production environments.
+Test::Weaken - Test that freed references are, indeed, freed
 
 =head1 SYNOPSIS
-
-Frees an object and checks that the memory was freed.  This module
-is intended for use in test scripts, to check that the programmer's
-strategy for weakening circular references does indeed work as
-expected.
 
     use Test::Weaken qw(poof);
 
@@ -222,7 +213,7 @@ expected.
            [ $obj1, $obj2 ];
     };  
 
-    my $freed_ok = Test::Weaken::poof( $test );
+    my $unfreed_count = Test::Weaken::poof( $test );
 
     my ($weak_count, $strong_count, $weak_unfreed, $strong_unfreed)
         = Test::Weaken::poof( $test );
@@ -237,71 +228,161 @@ expected.
     print "Strong unfreed references: ",
         join(" ", map { "".$_ } @$strong_unfreed), "\n";
 
-C<Test::Weaken> is intended for testing and debugging, rather than use in production code.
+=head1 DESCRIPTION
 
-=cut
+Frees memory, and
+checks that the memory
+is deallocated.
+Also checks deallocation of any memory referred to indirectly
+through arrays, hashes, and weak and strong references.
+Arrays, hashes and references are followed
+recursively and to unlimited depth.
+
+Circular references are handled 
+gracefully.
+In fact,
+a major purpose of C<Test::Weaken> is to test schemes for
+deallocating circular references.
+
+=head1 METHOD
+
+=head2 poof
+
+The C<poof> static method
+takes a closure as its only argument.
+This closure, the B<test object constructor>,
+should build the B<test object>,
+and create a B<primary test reference> to it.
+The return value of the test object constructor must be
+the primary test reference.
+The test object should be created as much as possible
+within the test object constructor,
+because that makes it easier to construct a
+test object which has no references into it from C<poof>'s
+calling environment.
+More on this below.
+
+By recursively
+following references, arrays and hashes
+from the primary test reference, C<poof>
+finds all of the references in the test object.
+These are C<poof>'s B<test references>.
+In recursing through the test object,
+C<poof> keeps track of visited references.
+C<poof> never visits the same reference twice,
+and therefore has no problem
+when it has to deal with a test object which contains circular references.
+
+In scalar context,
+C<poof> returns the number of unfreed test references.
+If all memory was deallocated successfully, this number will be zero.
+
+In array context, C<poof>
+returns a list
+with four elements.
+First, the starting count of weak references.
+Second, the starting count of strong references.
+Third, a reference
+to an array containing references to the unfreed weak references.
+Fourth, a reference to an array containing references to the unfreed
+strong references.
+
+If C<@result> is the result array from a call to C<poof>,
+then the number of strong references that were freed can be calculated
+as
+
+    $result[1] - @{$result[3]}
+
+that is,
+the starting count of strong references,
+less the size of the array containing the unfreed strong references.
+Similarly, the count of freed weak references will be
+
+    $result[0] - @{$result[2]}
+
+The unfreed references in the arrays can be dereferenced
+and the unfreed data examined.
+This may offer a clue to locate the source of a memory leak.
+
+One technique a programmer can use to find memory leaks,
+is to add tags to the arrays and hashes inside his data object as it is created.
+These tags can indicate the point of creation of the objects.
+Once C<poof>'s test object is tagged in this manner,
+C<poof>'s list of unfreed references can be dereferenced to find the
+tags.
+The result will be a listing of all the sources of memory leaks.
+
+The name C<poof> is intended to warn the programmer that the test
+is destructive.  I originally called the main subroutine C<destroy>,
+but that choice seemed unfortunate because of similarities to
+C<DESTROY>, a name reserved for object destructors.
+
+Obtaining the primary test reference
+from a test object constructor
+may seem
+roundabout.
+In fact, this indirect method is the easiest.
+The test object must not have any strong references to
+it from outside.
+It takes some craft
+to create and pass an object without holding
+a reference to it.
+Mistakes are easy to make.
+If a mistake were made, and C<poof>'s calling environment held
+a strong reference into the test object,
+not all memory would be freed.
+If this happened by accident,
+so that the programmer was not aware of what was going on,
+the effect would be a false negative.
+Errors like this are tricky to detect and
+hard to debug.
+
+If the test object is constructed completely within the test object constructor,
+and the only objects used to construct
+it are all in the scope of the test object constructor, 
+there will be
+no strong references held from outside the test object
+once the test object constructor returns.
+Following this discipline, it is relatively easy
+for a careful programmer to avoid false negatives.
 
 =head1 EXPORT
 
 By default, C<Test::Weaken> exports nothing.  Optionally, C<poof> may be exported.
 
-=head1 FUNCTION
-
-=head2 poof( CLOSURE )
-
-C<poof> takes a subroutine reference as its only argument.  The
-subroutine should construct the the object to be tested and return
-a reference to it.  C<poof> frees that object, then checks every
-reference in it to ensure that all references were released.  In
-scalar context, it returns a true value if the memory was properly
-released, false otherwise.
-
-In array context, C<poof> returns counts of the references in the
-original object and arrays with references to the references not
-freed.  Specifically, in an array context, C<poof> returns a list
-with four elements: first, the starting count of weak references;
-second, the starting count of strong references; third, a reference
-to an array containing references to the unfreed weak references;
-fourth, a reference to an array containing references to the unfreed
-strong references.
-
-The name C<poof> was intended to warn the programmer that the test
-is destructive.  I originally called the main subroutine C<destroy>,
-but that choice seemed unfortunate because of similarities to
-C<DESTROY>, a name reserved for object destructors.
-
-C<poof>'s way of obtaining the reference to be tested may seem
-roundabout.  In fact, the indirect method turns out to be easiest.
-The reference to be tested must not have any strong references to
-it from outside.  One way or another, some craft is required for
-the calling environment to create and pass an object without holding
-any reference to it.  Any mistake produces a false negative, one
-which is quite difficult to distinguish from a real negative.  The
-direct approach turns out to cost more trouble than it saves.
-
-=cut
-
 =head1 LIMITATIONS
 
-This module does not look inside code references.
+C<Test::Weaken> does not look inside code references.
 
-This module assumes the object returned from the subroutine is
-self-contained, that is, that there are no references to
-memory outside the object to be tested.
-If there are, the results will be hard to interpret, because the
-test assumes all referenced memory to should be freed.
-Additionally, the unfreed memory will be altered.
-To distinguish C<undef>'s in the original data from those which result
-from freeing of memory, C<Test::Weaken> overwrites them with the
-number 42.
+=head1 IMPLEMENTATION
+
+C<Test::Weaken> first recurses through the test object.
+It follows all weak and strong references, arrays and hashes.
+The test object is explored to unlimited depth.
+Visited references are tracked, and no reference is visited
+twice.
+Two lists of B<test references> into the original data are generated.
+One list is of strong test references and the other is of weak test references.
+
+As it recurses,
+C<Test::Weaken> creates a B<probe reference> for every test
+reference.
+The probe references to the strong test references are weakened,
+so that the probe reference will not interfere with normal deallocation of memory.
+
+When all the probe references have been created,
+The primary test reference is set to C<undef>.
+Normally, this is expected to cause all
+memory for the test object to be deallocated.
+To check this, C<Test::Weaken> dereferences the probe references.
+If the referent of the probe reference was deallocated,
+the value of the probe references will be C<undef>.
 
 =head1 AUTHOR
 
 Jeffrey Kegler
 
 =head1 BUGS
-
-None known at present, but see B<LIMITATIONS>.
 
 Please report any bugs or feature requests to C<bug-test-weaken at
 rt.cpan.org>, or through the web interface at
@@ -339,25 +420,25 @@ L<http://search.cpan.org/dist/Test-Weaken>
 
 =head1 SEE ALSO
 
-Potential users will want to compare C<Test::Memory::Cycle> and
-C<Devel::Cycle>, which examine existing structures non-destructively.
-C<Devel::Leak> also covers similar ground, although it requires
-Perl to be compiled with C<-DDEBUGGING> in order to work.  Devel::Cycle
+Potential users will want to compare L<Test::Memory::Cycle> and
+L<Devel::Cycle>, which examine existing structures non-destructively.
+L<Devel::Leak> also covers similar ground, although it requires
+Perl to be compiled with C<-DDEBUGGING> in order to work.  L<Devel::Cycle>
 looks inside closures if PadWalker is present, a feature C<Test::Weaken>
 does not have at present.
 
 =head1 ACKNOWLEDGEMENTS
 
 Thanks to jettero, Juerd and perrin of Perlmonks for their advice.
-Thanks also to Lincoln Stein (developer of C<Devel::Cycle>) for
+Thanks also to Lincoln Stein (developer of L<Devel::Cycle>) for
 test cases and other ideas.
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2007 Jeffrey Kegler, all rights reserved.
+Copyright 2007-2008 Jeffrey Kegler, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself.
+it under the same terms as Perl 5.10.
 
 =cut
 
