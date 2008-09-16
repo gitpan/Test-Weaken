@@ -4,7 +4,7 @@ require Exporter;
 
 our @ISA       = qw(Exporter);
 our @EXPORT_OK = qw(poof);
-our $VERSION   = '0.002003';
+our $VERSION   = '0.002004';
 $VERSION   = eval $VERSION;
 
 use warnings;

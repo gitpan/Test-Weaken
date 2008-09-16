@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:         Test-Weaken
-version:             0.002.003
+version:             0.002004
 abstract:            Test that freed references are, indeed, freed
 author:              
     - Jeffrey Kegler
