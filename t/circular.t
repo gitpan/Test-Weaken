@@ -11,16 +11,16 @@ use strict;
 use warnings;
 
 sub new {
-  my ($class) = @_;
-  my $self = bless { data => 'this is mycircular' }, $class;
-  $self->{'circular'} = [ $self ];
-  return $self;
+    my ($class) = @_;
+    my $self = bless { data => 'this is mycircular' }, $class;
+    $self->{'circular'} = [$self];
+    return $self;
 }
 
 sub undo {
-  my ($self) = @_;
-  @{$self->{'circular'}} = ();
-  return 1;
+    my ($self) = @_;
+    @{ $self->{'circular'} } = ();
+    return 1;
 }
 
 package main;
@@ -28,34 +28,21 @@ package main;
 use strict;
 use warnings;
 use Test::Weaken;
-use Test::More tests => 3;
+use Test::More tests => 2;
 
-is(
-    Test::Weaken::poof (
-        sub {
-           my $obj = MyCircular->new;
-           $obj->undo;
-           return $obj
-        }
-    ), 0,
-    'no destructor'
-);
+use lib 't/lib';
+use Test::Weaken::Test;
 
-is(
-    Test::Weaken::poof (
-        sub { MyCircular->new },
-        sub {
-            my ($obj) = @_;
-            $obj->undo;
-        }
-    ), 0,
-    'good destructor'
+my $test = Test::Weaken::leaks(
+    sub { MyCircular->new },
+    sub {
+        my ($obj) = @_;
+        $obj->undo;
+    }
 );
+my $unfreed_count = $test ? $test->unfreed_count() : 0;
+Test::Weaken::Test::is( $unfreed_count, 0, 'good destructor' );
 
-is(
-    Test::Weaken::poof (
-        sub { MyCircular->new },
-        sub { my ($obj) = @_ }
-    ), 3,
-    'null destructor'
-);
+$test = Test::Weaken::leaks( sub { MyCircular->new }, sub { } );
+$unfreed_count = $test ? $test->unfreed_count() : 0;
+Test::Weaken::Test::is( $unfreed_count, 2, 'null destructor' );

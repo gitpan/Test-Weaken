@@ -14,15 +14,15 @@ use warnings;
 our @INSTANCES;
 
 sub new {
-  my ($class) = @_;
-  my $self = bless { data => 'this is a myobject' }, $class;
-  push @INSTANCES, $self;
-  return $self;
+    my ($class) = @_;
+    my $self = bless { data => ['this is a myobject'] }, $class;
+    push @INSTANCES, $self;
+    return $self;
 }
 
 sub destroy {
-  my ($self) = @_;
-  return (@INSTANCES = grep {$_ != $self} @INSTANCES);
+    my ($self) = @_;
+    return ( @INSTANCES = grep { $_ != $self } @INSTANCES );
 }
 
 package main;
@@ -30,34 +30,22 @@ package main;
 use strict;
 use warnings;
 use Test::Weaken;
-use Test::More tests => 3;
+use Test::More tests => 2;
 
-is(
-    Test::Weaken::poof(
-        sub {
-            my $obj = MyObject->new;
-            $obj->destroy;
-            return $obj
-         }
-    ), 0,
-    'no destructor'
-);
+use lib 't/lib';
+use Test::Weaken::Test;
 
-is(
-    Test::Weaken::poof(
-        sub { MyObject->new },
-        sub {
-            my ($obj) = @_;
-            $obj->destroy;
-        }
-    ), 0,
-    'good destructor'
+@INSTANCES = ();
+my $test = Test::Weaken::leaks(
+    sub { MyObject->new },
+    sub {
+        my ($obj) = @_;
+        $obj->destroy;
+    }
 );
+ok( ( !$test ), 'good destructor' );
 
-is(
-    Test::Weaken::poof(
-        sub { MyObject->new },
-        sub { my ($obj) = @_ }
-    ), 1,
-    'no-op destructor'
-);
+@INSTANCES = ();
+$test = Test::Weaken::leaks( sub { return MyObject->new }, sub { } );
+my $unfreed_count = $test ? $test->unfreed_count() : 0;
+Test::Weaken::Test::is( $unfreed_count, 2, 'no-op destructor' );

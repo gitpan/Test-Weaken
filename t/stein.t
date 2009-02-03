@@ -5,58 +5,84 @@ use warnings;
 
 # The tests from Lincoln Stein's Devel::Cycle module
 
+use Scalar::Util qw(weaken isweak);
 use Test::More tests => 4;
 
-use Scalar::Util qw(weaken isweak);
+use lib 't/lib';
+use Test::Weaken::Test;
 
-BEGIN { use_ok('Test::Weaken') };
+BEGIN { use_ok('Test::Weaken') }
 
 sub brief_result {
-   my $text = 'total: weak=' . (shift) . q{; };
-   $text .= 'strong=' . (shift) . q{; };
-   $text .= 'unfreed: weak=' . scalar @{(shift)} . q{; };
-   $text .= 'strong=' . scalar @{(shift)};
-   return $text;
+    my $test              = shift;
+    my $unfreed_count     = $test->test();
+    my $unfreed_proberefs = $test->unfreed_proberefs();
+
+    my @unfreed_strong = ();
+    my @unfreed_weak   = ();
+    for my $proberef ( @{$unfreed_proberefs} ) {
+        if ( ref $proberef eq 'REF' and isweak ${$proberef} ) {
+            push @unfreed_weak, $proberef;
+        }
+        else {
+            push @unfreed_strong, $proberef;
+        }
+    }
+
+    return
+          'total: weak='
+        . $test->original_weak_count() . q{; }
+        . 'strong='
+        . $test->original_strong_count() . q{; }
+        . 'unfreed: weak='
+        . ( scalar @unfreed_weak ) . q{; }
+        . 'strong='
+        . ( scalar @unfreed_strong );
 }
 
 sub stein_1 {
-    my $test = {fred   => [qw(a b c d e)],
-		ethel  => [qw(1 2 3 4 5)],
-		george => {martha => 23,
-			   agnes  => 19}
-	       };
+    my $test = {
+        fred   => [qw(a b c d e)],
+        ethel  => [qw(1 2 3 4 5)],
+        george => {
+            martha => 23,
+            agnes  => 19
+        }
+    };
     $test->{george}{phyllis} = $test;
-    $test->{fred}[3]      = $test->{george};
-    $test->{george}{mary} = $test->{fred};
+    $test->{fred}[3]         = $test->{george};
+    $test->{george}{mary}    = $test->{fred};
     return $test;
 }
 
-
 sub stein_w1 {
     my $test = stein_1();
-    weaken($test->{george}->{phyllis});
+    weaken( $test->{george}->{phyllis} );
     return $test;
 }
 
 sub stein_w2 {
     my $test = stein_1();
-    weaken($test->{george}->{phyllis});
-    weaken($test->{fred}[3]);
+    weaken( $test->{george}->{phyllis} );
+    weaken( $test->{fred}[3] );
     return $test;
 }
 
-is( brief_result( Test::Weaken::poof(\&stein_1) ),
-    'total: weak=0; strong=7; unfreed: weak=0; strong=7',
+Test::Weaken::Test::is(
+    brief_result( new Test::Weaken( \&stein_1 ) ),
+    'total: weak=0; strong=5; unfreed: weak=0; strong=4',
     q{Stein's test}
 );
 
-is( brief_result( Test::Weaken::poof(\&stein_w1) ),
-    'total: weak=1; strong=6; unfreed: weak=0; strong=2',
+Test::Weaken::Test::is(
+    brief_result( new Test::Weaken( \&stein_w1 ) ),
+    'total: weak=0; strong=5; unfreed: weak=0; strong=2',
     q{Stein's test weakened once}
 );
 
-is( brief_result( Test::Weaken::poof(\&stein_w2) ),
-    'total: weak=2; strong=5; unfreed: weak=0; strong=0',
+Test::Weaken::Test::is(
+    brief_result( new Test::Weaken( \&stein_w2 ) ),
+    'total: weak=0; strong=5; unfreed: weak=0; strong=0',
     q{Stein's test weakened twice}
 );
 
