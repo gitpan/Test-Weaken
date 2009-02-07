@@ -1,6 +1,7 @@
 Changes
 etc/change_version.pl
 etc/check_links.pl
+etc/display_test.pl
 etc/do_critic.pl
 etc/do_tidy.pl
 etc/last_minute_check.sh
@@ -23,3 +24,4 @@ t/stein.t
 t/synopsis.t
 t/weaken.t
 t/lib/Test/Weaken/Test.pm
+t/reftypes.pl

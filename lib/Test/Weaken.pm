@@ -10,7 +10,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '1.003_001';
+our $VERSION   = '1.003_002';
 
 ## no critic (BuiltinFunctions::ProhibitStringyEval)
 $VERSION = eval $VERSION;
@@ -38,44 +38,44 @@ of them, even implicitly.
 =cut
 
 sub Test::Weaken::Internal::follow {
-    my $base_ref = shift;
+    my $base_probe = shift;
 
     # Initialize the results with a reference to the dereferenced
     # base reference.
-    my $result  = [ \( ${$base_ref} ) ];
+    my $result  = [ \( ${$base_probe} ) ];
     my %reverse = ();
     my $to_here = -1;
-    REF: while ( $to_here < $#{$result} ) {
+    PROBE: while ( $to_here < $#{$result} ) {
         $to_here++;
-        my $refref = $result->[$to_here];
-        my $type   = reftype $refref;
+        my $probe = $result->[$to_here];
+        my $type  = reftype $probe;
 
-        my @old_refrefs = ();
-        if ( $type eq 'REF' ) { @old_refrefs = ($refref) }
+        my @old_probes = ();
+        if ( $type eq 'REF' ) { push @old_probes, $probe; }
         elsif ( $type eq 'ARRAY' ) {
-            @old_refrefs = map { \$_ } grep { ref $_ } @{$refref};
+            @old_probes = map { \$_ } grep { ref $_ } @{$probe};
         }
         elsif ( $type eq 'HASH' ) {
-            @old_refrefs = map { \$_ } grep { ref $_ } values %{$refref};
+            @old_probes = map { \$_ } grep { ref $_ } values %{$probe};
         }
 
-        for my $old_refref (@old_refrefs) {
-            my $rr_type = reftype ${$old_refref};
-            my $new_refref =
-                  $rr_type eq 'HASH'    ? \%{ ${$old_refref} }
-                : $rr_type eq 'ARRAY'   ? \@{ ${$old_refref} }
-                : $rr_type eq 'REF'     ? \${ ${$old_refref} }
-                : $rr_type eq 'SCALAR'  ? \${ ${$old_refref} }
-                : $rr_type eq 'CODE'    ? \&{ ${$old_refref} }
-                : $rr_type eq 'VSTRING' ? \${ ${$old_refref} }
-                :                         undef;
-            if ( defined $new_refref and not $reverse{ $new_refref + 0 } ) {
-                push @{$result}, $new_refref;
-                $reverse{ $new_refref + 0 }++;
+        for my $old_probe (@old_probes) {
+            my $object_type = reftype ${$old_probe};
+            my $new_probe =
+                  $object_type eq 'HASH'    ? \%{ ${$old_probe} }
+                : $object_type eq 'ARRAY'   ? \@{ ${$old_probe} }
+                : $object_type eq 'REF'     ? \${ ${$old_probe} }
+                : $object_type eq 'SCALAR'  ? \${ ${$old_probe} }
+                : $object_type eq 'CODE'    ? \&{ ${$old_probe} }
+                : $object_type eq 'VSTRING' ? \${ ${$old_probe} }
+                :                             undef;
+            if ( defined $new_probe and not $reverse{ $new_probe + 0 } ) {
+                push @{$result}, $new_probe;
+                $reverse{ $new_probe + 0 }++;
             }
         }
 
-    }    # REF
+    }    # PROBE
 
     return $result;
 
@@ -139,54 +139,54 @@ sub test {
     my $constructor = $self->{constructor};
     my $destructor  = $self->{destructor};
 
-    my $test_object_rr = \( $constructor->() );
-    if ( not ref ${$test_object_rr} ) {
+    my $test_object_probe = \( $constructor->() );
+    if ( not ref ${$test_object_probe} ) {
         carp(
             'Test::Weaken test object constructor did not return a reference'
         );
     }
-    my $refrefs = Test::Weaken::Internal::follow($test_object_rr);
+    my $probes = Test::Weaken::Internal::follow($test_object_probe);
 
-    $self->{probe_count} = @{$refrefs};
-    $self->{original_weak_count} =
-        grep { ref $_ eq 'REF' and isweak ${$_} } @{$refrefs};
-    $self->{original_strong_count} =
-        $self->{probe_count} - $self->{original_weak_count};
+    $self->{probe_count} = @{$probes};
+    $self->{weak_probe_count} =
+        grep { ref $_ eq 'REF' and isweak ${$_} } @{$probes};
+    $self->{strong_probe_count} =
+        $self->{probe_count} - $self->{weak_probe_count};
 
-    for my $refref ( @{$refrefs} ) {
-        weaken($refref);
+    for my $probe ( @{$probes} ) {
+        weaken($probe);
     }
 
     # Now free everything.
-    $destructor->( ${$test_object_rr} ) if defined $destructor;
+    $destructor->( ${$test_object_probe} ) if defined $destructor;
 
-    $test_object_rr = undef;
+    $test_object_probe = undef;
 
-    my $unfreed_proberefs = [ grep { defined $_ } @{$refrefs} ];
-    $self->{unfreed_proberefs} = $unfreed_proberefs;
+    my $unfreed_probes = [ grep { defined $_ } @{$probes} ];
+    $self->{unfreed_probes} = $unfreed_probes;
 
-    return scalar @{$unfreed_proberefs};
+    return scalar @{$unfreed_probes};
 
 }    # sub test
 
 sub Test::Weaken::Internal::poof_array_return {
 
     my $test    = shift;
-    my $results = $test->{unfreed_proberefs};
+    my $results = $test->{unfreed_probes};
 
     my @unfreed_strong = ();
     my @unfreed_weak   = ();
-    for my $refref ( @{$results} ) {
-        if ( ref $refref eq 'REF' and isweak ${$refref} ) {
-            push @unfreed_weak, $refref;
+    for my $probe ( @{$results} ) {
+        if ( ref $probe eq 'REF' and isweak ${$probe} ) {
+            push @unfreed_weak, $probe;
         }
         else {
-            push @unfreed_strong, $refref;
+            push @unfreed_strong, $probe;
         }
     }
 
     # See the POD on the return values
-    return ( @{$test}{qw(original_weak_count original_strong_count)},
+    return ( @{$test}{qw(weak_probe_count strong_probe_count)},
         \@unfreed_weak, \@unfreed_strong );
 
 } ## end sub poof_array_return;
@@ -209,7 +209,7 @@ sub leaks {
 
 sub unfreed_proberefs {
     my $test   = shift;
-    my $result = $test->{unfreed_proberefs};
+    my $result = $test->{unfreed_probes};
     if ( not defined $result ) {
         croak('Results not available for this Test::Weaken object');
     }
@@ -218,7 +218,7 @@ sub unfreed_proberefs {
 
 sub unfreed_count {
     my $test   = shift;
-    my $result = $test->{unfreed_proberefs};
+    my $result = $test->{unfreed_probes};
     if ( not defined $result ) {
         croak('Results not available for this Test::Weaken object');
     }
@@ -234,18 +234,18 @@ sub probe_count {
     return $count;
 }
 
-sub original_weak_count {
+sub weak_probe_count {
     my $test  = shift;
-    my $count = $test->{original_weak_count};
+    my $count = $test->{weak_probe_count};
     if ( not defined $count ) {
         croak('Results not available for this Test::Weaken object');
     }
     return $count;
 }
 
-sub original_strong_count {
+sub strong_probe_count {
     my $test  = shift;
-    my $count = $test->{original_strong_count};
+    my $count = $test->{strong_probe_count};
     if ( not defined $count ) {
         croak('Results not available for this Test::Weaken object');
     }
@@ -262,46 +262,67 @@ Test::Weaken - Test that freed references are, indeed, freed
 
 =head1 SYNOPSIS
 
+=begin Marpa::Test::Display:
+
+## start display
+## next display
+is_file($_, '../t/synopsis.t', 'synopsis')
+
+=end Marpa::Test::Display:
+
     use Test::Weaken qw(leaks);
     use Data::Dumper;
     use Math::BigInt;
     use Math::BigFloat;
+    use Carp;
+    use English qw( -no_match_vars );
 
     my $good_test = sub {
-       my $obj1 = new Math::BigInt('42');
-       my $obj2 = new Math::BigFloat('7.11');
-       [ $obj1, $obj2 ];
-    };  
-
-    my $bad_test = sub {
-       my $array = [ 42, 711 ];
-       push @{$array}, $array;
-       $array;
+        my $obj1 = new Math::BigInt('42');
+        my $obj2 = new Math::BigFloat('7.11');
+        [ $obj1, $obj2 ];
     };
 
-    my $bad_destructor = sub { "I don't work" };
+    my $bad_test = sub {
+        my $array = [ 42, 711 ];
+        push @{$array}, $array;
+        $array;
+    };
 
-    if ( !leaks( $good_test ) ) {
-        print "No leaks in test 1\n";
-    } else {
-        print "There were memory leaks from test 1!\n";
+    my $bad_destructor = sub {'I am useless'};
+
+    if ( !leaks($good_test) ) {
+        print "No leaks in test 1\n" or croak("Cannot print to STDOUT: $ERRNO");
+    }
+    else {
+        print "There were memory leaks from test 1!\n"
+            or croak("Cannot print to STDOUT: $ERRNO");
     }
 
-    my $test = Test::Weaken::leaks({
-        constructor => $bad_test,
-        destructor  => $bad_destructor,
-    });
-    if ( $test ) {
+    my $test = Test::Weaken::leaks(
+        {   constructor => $bad_test,
+            destructor  => $bad_destructor,
+        }
+    );
+    if ($test) {
         my $unfreed_proberefs = $test->unfreed_proberefs();
-        my $unfreed_count = @{$unfreed_proberefs};
+        my $unfreed_count     = @{$unfreed_proberefs};
         printf "Test 2: %d of %d original references were not freed\n",
-            $test->unfreed_count(),
-            $test->probe_count();
-        print "These are the probe references to the unfreed objects:\n";
+            $test->unfreed_count(), $test->probe_count()
+            or croak("Cannot print to STDOUT: $ERRNO");
+        print "These are the probe references to the unfreed objects:\n"
+            or croak("Cannot print to STDOUT: $ERRNO");
         for my $proberef ( @{$unfreed_proberefs} ) {
-            print Data::Dumper->Dump( [$proberef], ['unfreed'] );
+            print Data::Dumper->Dump( [$proberef], ['unfreed'] )
+                or croak("Cannot print to STDOUT: $ERRNO");
         }
     }
+
+=begin Marpa::Test::Display:
+
+## end display
+
+=end Marpa::Test::Display:
 
 =head1 DESCRIPTION
 
@@ -333,6 +354,48 @@ circular references.
 To avoid infinite loops,
 C<Test::Weaken> records all the memory objects it visits,
 and will not visit the same memory object twice.
+
+=head2 Tracked Objects and Followed Objects.
+
+Any memory object may be a B<tracked object>,
+if C<Test::Weaken> keeps track of it with a probe reference.
+An object is a B<followed object>
+if C<Test::Weaken> follows it in its recursive search for objects to track.
+Some tracked objects are not followed,
+and some followed objects are not tracked.
+
+Elements of arrays and hashes are followed, but are never tracked.
+They are not considered memory objects, because their memory will
+always be
+freed when the array or hash they belong to is destroyed.
+
+Variables and constants which are not array or hash elements
+are tracked or followed according to their type.
+Variables of type
+SCALAR, ARRAY, HASH, CODE, REF, VSTRING and Regexp are tracked.
+ARRAY, HASH, and REF variables are followed.
+SCALAR, VSTRING and Regexp objects do not hold references to memory objects
+and cannot be followed.
+CODE objects may, as closures, hold references to memory objects,
+and future implementations of 
+C<Test::Weaken> may look inside CODE objects
+and follow the references they contain,
+but this implementation does not.
+
+Perl objects of types other than those already described
+in this section
+are not tracked or followed.
+FORMAT objects
+are always global,
+and their use is not recommended.
+If C<Test::Weaken> encountered FORMAT, GLOB, IO or LVALUE
+objects, it would be through a reference,
+and references to these objects are rare and hard to create.
+GLOB, IO, and LVALUE objects
+are not standard memory objects
+and it is not clear how to track or follow them
+in a way that does
+anything but confuse matters.
 
 =head2 Why the Test Object is Passed via a Closure
 
@@ -477,7 +540,7 @@ If circumstances allow you to
 add elements to the arrays and hashes,
 you might find it useful to "tag" them for tracking purposes.
 
-You can uniquely identify memory objects using
+You can identify memory objects using
 the referent addresses of the probe references.
 A referent address 
 can be determined by using the
@@ -485,6 +548,26 @@ C<refaddr> method of
 L<Scalar::Util>.
 You can also obtain the referent address of a reference by adding zero
 to the reference.
+
+When using the referent addresses to identify objects,
+a corner case must be kept in mind.
+Referent addresses are only unique identifiers at a point in time.
+Once an object is freed, its address can be reused.
+An object with the same referent address
+as an object examined earlier is not necessarily
+the same object.
+
+To be sure an earlier and a later object with the same address
+are actually the same object,
+you need to know that the object is persistent,
+or to apply other tests.
+Pedantically, it is possible that two indiscernable
+(that is, completely identical)
+objects with the same referent address are, in a sense, different.
+The first object might have been destroyed and a second, identical,
+object created at the same address.
+But for most practical programming purposes,
+two indiscernable objects can be treated as the same object.
 
 Note that in other Perl documentation, the term "reference address" is often
 used when a referent address is meant.
@@ -527,13 +610,9 @@ Nothing prevents a test object constructor from, for example,
 simply returning a reference it finds in global scope as the
 primary test reference.
 
-=head1 EXPORT
+=head1 EXPORTS
 
 By default, C<Test::Weaken> exports nothing.  Optionally, C<leaks> may be exported.
-
-=head1 LIMITATIONS
-
-C<Test::Weaken> does not check for leaked code references or look inside them.
 
 =head1 IMPLEMENTATION
 
@@ -575,6 +654,12 @@ progress on your bug as I make changes.
 =head1 SUPPORT
 
 You can find documentation for this module with the perldoc command.
+
+=begin Marpa::Test::Display:
+
+## skip display
+
+=end Marpa::Test::Display:
 
     perldoc Test::Weaken
 

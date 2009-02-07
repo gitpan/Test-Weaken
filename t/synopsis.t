@@ -2,60 +2,75 @@
 
 use strict;
 use warnings;
-use English qw( -no_match_vars );
 use Test::More tests => 2;
-use Fatal qw(close);
-use Carp;
-use Scalar::Util qw(weaken isweak);
+use Fatal qw(open close);
 
 use lib 't/lib';
 use Test::Weaken::Test;
 
 BEGIN { use_ok('Test::Weaken') }
 
-package main;
-
-# slurp in the code
-my $filename = $INC{'Test/Weaken.pm'};
-open my $code_fh, '<', $filename or croak("Cannot open $filename: $!");
-my $code = do { local ($RS) = undef; <$code_fh> };
-close $code_fh;
-
-# remove stuff before and after the SYNOPSIS
-$code =~ s/.*^=head1\s*SYNOPSIS\s*$//xms;
-$code =~ s/^=head1.*\z//xms;
-
-# remove POD text
-$code =~ s/^\S[^\n]*$//xmsg;
-
-my $code_output = q{};
-## no critic (InputOutput::ProhibitTwoArgOpen)
-my $pid = open my $read, q{-|};
+## no critic (InputOutput::RequireBriefOpen)
+open my $save_stdout, '>&STDOUT';
 ## use critic
-if ( not defined $pid ) {
-    croak("Could not fork: $!");
-}
-elsif ($pid) {
-    local $RS = undef;
-    $code_output .= <$read>;
-    close $read;
-    if ( my $child_error = ${^CHILD_ERROR_NATIVE} ) {
-        $code_output .= "synopsis code returned $child_error\n";
-    }
+
+close STDOUT;
+my $code_output;
+open STDOUT, q{>}, \$code_output;
+
+## use Marpa::Test::Display synopsis
+
+use Test::Weaken qw(leaks);
+use Data::Dumper;
+use Math::BigInt;
+use Math::BigFloat;
+use Carp;
+use English qw( -no_match_vars );
+
+my $good_test = sub {
+    my $obj1 = new Math::BigInt('42');
+    my $obj2 = new Math::BigFloat('7.11');
+    [ $obj1, $obj2 ];
+};
+
+my $bad_test = sub {
+    my $array = [ 42, 711 ];
+    push @{$array}, $array;
+    $array;
+};
+
+my $bad_destructor = sub {'I am useless'};
+
+if ( !leaks($good_test) ) {
+    print "No leaks in test 1\n" or croak("Cannot print to STDOUT: $ERRNO");
 }
 else {
-    open STDERR, '>&STDOUT'
-        or croak("Cannot dup to STDOUT: $ERRNO");
-    $code .= "\n1;\n";
-    ## no critic (BuiltinFunctions::ProhibitStringyEval)
-    my $eval_ok = eval $code;
-    ## use critic
-    if ( not $eval_ok ) {
-        print "eval failed: $@\n"
+    print "There were memory leaks from test 1!\n"
+        or croak("Cannot print to STDOUT: $ERRNO");
+}
+
+my $test = Test::Weaken::leaks(
+    {   constructor => $bad_test,
+        destructor  => $bad_destructor,
+    }
+);
+if ($test) {
+    my $unfreed_proberefs = $test->unfreed_proberefs();
+    my $unfreed_count     = @{$unfreed_proberefs};
+    printf "Test 2: %d of %d original references were not freed\n",
+        $test->unfreed_count(), $test->probe_count()
+        or croak("Cannot print to STDOUT: $ERRNO");
+    print "These are the probe references to the unfreed objects:\n"
+        or croak("Cannot print to STDOUT: $ERRNO");
+    for my $proberef ( @{$unfreed_proberefs} ) {
+        print Data::Dumper->Dump( [$proberef], ['unfreed'] )
             or croak("Cannot print to STDOUT: $ERRNO");
     }
-    exit;
 }
+
+## no Marpa::Test::Display
+
+open STDOUT, q{>&}, $save_stdout;
 
 Test::Weaken::Test::is( $code_output, <<'EOS', 'synopsis output' );
 No leaks in test 1
