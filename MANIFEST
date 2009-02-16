@@ -14,14 +14,15 @@ Makefile.PL
 MANIFEST
 META.yml # Will be created by "make dist"
 README
+sandbox/reftypes.pl
 t/00-load.t
 t/array.t
 t/circular.t
 t/bug42903.t
 t/faux_gtk.t
 t/poof.t
+t/snippet.t
 t/stein.t
 t/synopsis.t
 t/weaken.t
 t/lib/Test/Weaken/Test.pm
-t/reftypes.pl
