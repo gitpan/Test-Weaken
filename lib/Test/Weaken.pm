@@ -7,7 +7,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '2.000000';
+our $VERSION   = '2.001_000';
 
 ## no critic (BuiltinFunctions::ProhibitStringyEval)
 $VERSION = eval $VERSION;
@@ -41,6 +41,7 @@ use Scalar::Util qw(refaddr reftype isweak weaken);
 
 sub follow {
     my $base_probe = shift;
+    my $ignore     = shift;
 
     # Initialize the results with a reference to the dereferenced
     # base reference.
@@ -61,7 +62,10 @@ sub follow {
             @old_probes = map { \$_ } grep { ref $_ } values %{$probe};
         }
 
-        for my $old_probe (@old_probes) {
+        if ($ignore) {
+            @old_probes = grep { not $ignore->($_) } @old_probes;
+        }
+        OLD_PROBE: for my $old_probe (@old_probes) {
             my $object_type = reftype ${$old_probe};
             my $new_probe =
                   $object_type eq 'HASH'    ? \%{ ${$old_probe} }
@@ -71,10 +75,12 @@ sub follow {
                 : $object_type eq 'CODE'    ? \&{ ${$old_probe} }
                 : $object_type eq 'VSTRING' ? \${ ${$old_probe} }
                 :                             undef;
-            if ( defined $new_probe and not $reverse{ $new_probe + 0 } ) {
-                push @{$result}, $new_probe;
-                $reverse{ $new_probe + 0 }++;
-            }
+            next OLD_PROBE if not defined $new_probe;
+            my $new_probe_address = $new_probe + 0;
+            next OLD_PROBE if $reverse{$new_probe_address};
+            $reverse{ $new_probe_address + 0 }++;
+            next OLD_PROBE if defined $ignore and $ignore->($new_probe);
+            push @{$result}, $new_probe;
         }
 
     }    # PROBE
@@ -114,22 +120,38 @@ sub Test::Weaken::new {
             delete $arg1->{destructor};
         }
 
+        if ( defined $arg1->{ignore} ) {
+            $self->{ignore} = $arg1->{ignore};
+            delete $arg1->{ignore};
+        }
+
         my @unknown_named_args = keys %{$arg1};
 
         if (@unknown_named_args) {
-            croak(
-                'Unknown named args to Test::Weaken::new: ',
-                ( join q{ }, @unknown_named_args )
-            );
+            my $message = q{};
+            for my $unknown_named_arg (@unknown_named_args) {
+                $message .= "Unknown named arg: '$unknown_named_arg'\n";
+            }
+            croak( $message
+                    . 'Test::Weaken failed due to unknown named arg(s)' );
         }
 
     }    # UNPACK_ARGS
 
-    croak('Test::Weaken: constructor must be CODE ref')
-        unless ref $self->{constructor} eq 'CODE';
+    if ( my $ref_type = ref $self->{constructor} ) {
+        croak('Test::Weaken: constructor must be CODE ref')
+            unless ref $self->{constructor} eq 'CODE';
+    }
 
-    croak('Test::Weaken: destructor must be CODE ref')
-        unless ref $self->{destructor} eq 'CODE';
+    if ( my $ref_type = ref $self->{destructor} ) {
+        croak('Test::Weaken: destructor must be CODE ref')
+            unless ref $self->{destructor} eq 'CODE';
+    }
+
+    if ( my $ref_type = ref $self->{ignore} ) {
+        croak('Test::Weaken: ignore must be CODE ref')
+            unless ref $self->{ignore} eq 'CODE';
+    }
 
     return $self;
 
@@ -140,6 +162,7 @@ sub Test::Weaken::test {
     my $self        = shift;
     my $constructor = $self->{constructor};
     my $destructor  = $self->{destructor};
+    my $ignore      = $self->{ignore};
 
     my $test_object_probe = \( $constructor->() );
     if ( not ref ${$test_object_probe} ) {
@@ -147,7 +170,8 @@ sub Test::Weaken::test {
             'Test::Weaken test object constructor did not return a reference'
         );
     }
-    my $probes = Test::Weaken::Internal::follow($test_object_probe);
+    my $probes =
+        Test::Weaken::Internal::follow( $test_object_probe, $ignore );
 
     $self->{probe_count} = @{$probes};
     $self->{weak_probe_count} =
@@ -254,13 +278,54 @@ sub Test::Weaken::strong_probe_count {
     return $count;
 }
 
+sub Test::Weaken::check_ignore {
+    my ( $ignore, $error_callback ) = @_;
+    return sub {
+        my ($probe_ref) = @_;
+
+        my $ref_type = ref $probe_ref;
+        if ( $ref_type eq 'REF' ) {
+            $ref_type =
+                ( isweak( ${$probe_ref} ) ? 'weak' : 'strong' ) . q{ }
+                . $ref_type;
+        }
+        my $before_signature = sprintf "$ref_type at 0x%x",
+            ( $probe_ref + 0 );
+
+        my $return_value = $ignore->($probe_ref);
+
+        $ref_type = ref $probe_ref;
+        if ( $ref_type eq 'REF' ) {
+            $ref_type =
+                ( isweak( ${$probe_ref} ) ? 'weak' : 'strong' ) . q{ }
+                . $ref_type;
+        }
+        my $after_signature = sprintf "$ref_type at 0x%x", ( $probe_ref + 0 );
+
+        if ( $before_signature ne $after_signature ) {
+            my $message =
+                "Problem in ignore callback: arg was changed from '$before_signature' to '$after_signature'";
+            if ($error_callback) {
+                $error_callback->(
+                    $message, $before_signature, $after_signature, $probe_ref
+                );
+            }
+            else {
+                croak($message);
+            }
+        }
+
+        return $return_value;
+    };
+}
+
 1;
 
 __END__
 
 =head1 NAME
 
-Test::Weaken - Test that freed references are, indeed, freed
+Test::Weaken - Test that freed memory objects were, indeed, freed
 
 =head1 SYNOPSIS
 
@@ -268,7 +333,7 @@ Test::Weaken - Test that freed references are, indeed, freed
 
 ## start display
 ## next display
-is_file($_, '../t/synopsis.t', 'synopsis')
+is_file($_, 't/synopsis.t', 'synopsis')
 
 =end Marpa::Test::Display:
 
@@ -618,7 +683,7 @@ Errors are always thrown as exceptions.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'leaks snippet')
+is_file($_, 't/snippet.t', 'leaks snippet')
 
 =end Marpa::Test::Display:
 
@@ -689,6 +754,86 @@ The primary purpose for
 the test object destructor is to enable
 C<Test::Weaken> to work with these objects.
 
+=item ignore
+
+=begin Marpa::Test::Display:
+
+## start display
+## next 2 displays
+is_file($_, 't/ignore.t', 'ignore snippet')
+
+=end Marpa::Test::Display:
+
+    sub ignore_my_global {
+        my ($thing) = @_;
+        return ( Scalar::Util::blessed($thing) && $thing->isa('MyGlobal') );
+    }
+
+    my $test = Test::Weaken::leaks(
+        {   constructor => sub { MyObject->new },
+            ignore      => \&ignore_my_global,
+        }
+    );
+
+=begin Marpa::Test::Display:
+
+## end display
+
+=end Marpa::Test::Display:
+
+The B<ignore> argument is optional.
+It can be used to prevent C<Test::Weaken> from following
+and tracking selected probe references, as chosen by
+the user.
+In general,
+use of the C<ignore> argument should be avoided
+because filtering the probe references returned by
+L<unfreed_proberefs> after the fact is easier, safer and
+faster.
+The C<ignore> argument is provided for those situations
+where after-the-fact filtering
+is not practical, such as when the user needs to filter out
+objects which would generate a large amount of data.
+
+When specified, the value of the C<ignore> argument must be a
+reference to a subroutine.
+The subroutine will be called once for every probe reference,
+with that probe reference as the only argument.
+This probe reference and everything it refers to must not
+be altered.
+The subroutine should return Perl true if the probe reference is
+to an object that should be ignored --
+that is, neither followed or tracked.
+Otherwise the subroutine should return a Perl false.
+
+There are several reasons to avoid use
+of the C<ignore> option in favor of after-the-fact analysis.
+First, if the probe reference or its referents are altered,
+C<Test::Weaken> may throw an exception, cause an abend, go into an infinite loop, or produce
+unexpected results.
+Alteration of the subroutine's input data can
+can happen by mistake.
+Those C<ignore> subroutines which are necessary
+are best kept simple,
+and as much of the analysis as possible deferred until after the test is
+completed.
+
+A second reason to avoid C<ignore> is that
+the subtrouine will be called once per probe reference.
+The overhead of these subroutine calls will slow down the test down,
+perhaps significantly.
+
+A third reason to avoid C<ignore> is that
+coding the C<ignore> subroutine is also harder than after-the-fact analysis.
+The C<ignore> subroutine only sees the probe references
+one by one, out of context, while in the result from
+L<unfreed_proberefs> all the results are given at once.
+
+Finally, since the C<ignore> subroutine is called inside C<Test::Weaken>'s
+logic, rather than directly by the user, it can be hard to debug.
+C<Test::Weaken> offers some help in this situation.
+See L<below|/"Debugging Ignore Subroutines">.
+
 =back
 
 =head2 unfreed_proberefs
@@ -697,7 +842,7 @@ C<Test::Weaken> to work with these objects.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'unfreed_proberefs snippet')
+is_file($_, 't/snippet.t', 'unfreed_proberefs snippet')
 
 =end Marpa::Test::Display:
 
@@ -752,7 +897,7 @@ And weak references are strengthened when they are copied.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'unfreed_count snippet')
+is_file($_, 't/snippet.t', 'unfreed_count snippet')
 
 =end Marpa::Test::Display:
 
@@ -780,7 +925,7 @@ the return value of the C<unfreed_proberefs> method.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'probe_count snippet')
+is_file($_, 't/snippet.t', 'probe_count snippet')
 
 =end Marpa::Test::Display:
 
@@ -817,7 +962,7 @@ test object reference.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'weak_probe_count snippet')
+is_file($_, 't/snippet.t', 'weak_probe_count snippet')
 
 =end Marpa::Test::Display:
 
@@ -855,7 +1000,7 @@ test object reference.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'strong_probe_count snippet')
+is_file($_, 't/snippet.t', 'strong_probe_count snippet')
 
 =end Marpa::Test::Display:
 
@@ -913,7 +1058,7 @@ even when the test did find any unfreed objects.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'new snippet')
+is_file($_, 't/snippet.t', 'new snippet')
 
 =end Marpa::Test::Display:
 
@@ -969,7 +1114,7 @@ exception.
 
 ## start display
 ## next display
-is_file($_, '../t/snippet.t', 'test snippet')
+is_file($_, 't/snippet.t', 'test snippet')
 
 =end Marpa::Test::Display:
 
@@ -1067,6 +1212,142 @@ you want to seek out the reference
 that keeps the object's refcount above zero.
 Kevin Ryde reports that L<Devel::FindRef>
 can be useful for this.
+
+=head2 Debugging Ignore Subroutines
+
+As mentioned in the description of the L<C<ignore> option|/"ignore">,
+the ignore subroutines, like all callbacks, can be hard to debug.
+C<Test::Weaken> offers some support for this situation.
+
+=begin Marpa::Test::Display:
+
+## start display
+## next display
+is_file($_, 't/ignore.t', 'check_ignore snippet')
+
+=end Marpa::Test::Display:
+
+    Test::Weaken::leaks(
+        {   constructor => sub { MyObject->new },
+            ignore      => Test::Weaken::check_ignore(
+                \&buggy_ignore, \&error_callback
+            ),
+        }
+    );
+
+
+=begin Marpa::Test::Display:
+
+## end display
+
+=end Marpa::Test::Display:
+
+C<Test::Weaken::check_ignore> is a static method which constructs
+a debugging wrapper from its code reference arguments.
+It takes takes two arguments, one optional.
+The first must be the problematic ignore callback.
+The second can be an error callback, which is called when a problem
+is detected.
+
+C<Test::Weaken::check_ignore>
+returns a reference to the debugging wrapper.
+If no problems are detected,
+the wrapper behaves exactly like the problematic ignore subroutine,
+except that the wrappered version is slower.
+
+To discover when and if the problematic ignore subroutine is
+altering its probe reference argument,
+C<Test::Weaken::check_ignore> takes a "signature" of the probe reference
+before and after the problematic ignore subroutine is called.
+The signature contains the probe referent's builtin type
+(obtained by calling C<ref> on the probe reference)
+and the probe referent's address.
+If the reftype was 'REF', the signature also indicates whether the referent was
+strong or weak.
+If the two signatures differ,
+the debug wrapper treats it as a problem.
+
+If a problem was detected
+and no error callback was specified,
+the debug wrapper throws an exception with a default message describing
+the problem:
+
+=begin Marpa::Test::Display:
+
+## skip display
+
+=end Marpa::Test::Display:
+
+    Problem in ignore callback: arg was changed from 'strong REF at 0x8361a88' to 'SCALAR at 0x8361a88'
+
+If a problem was detected and an error callback was specified, the error callback is called
+with four arguments: the default message, the "before" signature,
+the "after" signature, and the probe reference.
+Here is an example of an error callback:
+
+=begin Marpa::Test::Display:
+
+## start display
+## next display
+is_file($_, 't/ignore.t', 'error callback snippet')
+
+=end Marpa::Test::Display:
+
+    {
+        my $error_callback_count = 0;
+        my $max_errors           = 100;
+
+        sub error_callback {
+            my ($standard_message, $before_signature,
+                $after_signature,  $probe_ref
+            ) = @_;
+            $error_callback_count++;
+            my $custom_message = "'$before_signature' -> '$after_signature'\n";
+            print {*STDERR} $custom_message
+                or croak("Cannot print STDERR: $ERRNO");
+            if ( $error_callback_count > $max_errors ) {
+                croak("Terminating after $max_errors errors");
+            }
+            return 1;
+        }
+    }
+
+
+=begin Marpa::Test::Display:
+
+## end display
+
+=end Marpa::Test::Display:
+
+This example of an error callback does not throw an exception on the first
+error, allowing multiple errors to be caught.
+Note that it does keep count of the number of times it was called,
+and will throw an exception after a maximum.
+It is prudent to put a limit on the number of error callbacks,
+because one common symptom
+of a buggy C<ignore> subroutine
+is an infinite loop.
+
+The fourth, probe reference, argument is the same probe reference
+whose overwritability is one of the vulnerabilities
+C<Test::Weaken::check_ignore> exists to discover.
+The probe reference argument must not be altered.
+In fact, for safety, the error callback should usually ignore the probe reference argument.
+But it is available to help in the more desperate cases.
+
+Comparing signatures detects most problems,
+but C<Test::Weaken::check_ignore> only detects changes in the type of the probe referents,
+not their values.
+A user who wants to watch for altered values or to detect deep changes in objects
+can alter
+C<Test::Weaken::check_ignore> to construct
+their own, custom, debugging wrapper.
+C<Test::Weaken::check_ignore> is static
+and is easy to copy from the C<Test::Weaken> source
+and hack to the user's specification.
+C<Test::Weaken::check_ignore> does not use any C<Test::Weaken>
+package resources, so the hacked version does not need to
+reside in the C<Test::Weaken> package.
 
 =head1 EXPORTS
 
