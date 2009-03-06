@@ -6,13 +6,25 @@
 use strict;
 use warnings;
 
-use Test::More tests => 10;
+use Test::More tests => 24;
 use Data::Dumper;
 use English qw( -no_match_vars );
 use Fatal qw(open close);
 
 use lib 't/lib';
 use Test::Weaken::Test;
+
+sub divert_stderr {
+    my $stderr = q{};
+    open my $save_stderr, '>&STDERR';
+    close STDERR;
+    open STDERR, '>', \$stderr;
+    return sub {
+        open STDERR, '>&', $save_stderr;
+        close $save_stderr;
+        return $stderr;
+    };
+}
 
 package MyGlobal;
 
@@ -48,6 +60,13 @@ sub new {
     my $self   = \$strong;
     Scalar::Util::weaken( $weak = \$self );
     return bless [ \$self ], $class;
+}
+
+package DeepObject;
+
+sub new {
+    my ($class) = @_;
+    return bless { one => { two => { three => 4 } } }, $class;
 }
 
 package main;
@@ -109,11 +128,14 @@ $VAR1 = [
         ];
 EOS
 
+## use Marpa::Test::Display check_ignore 1 arg snippet
 $test = Test::Weaken::leaks(
     {   constructor => sub { MyObject->new },
         ignore => Test::Weaken::check_ignore( \&ignore_my_global ),
     }
 );
+## no Marpa::Test::Display
+
 if ( not $test ) {
     pass('wrappered good ignore');
 }
@@ -128,6 +150,7 @@ sub overwriting_ignore {
     return 0;
 }
 
+my $restore     = divert_stderr();
 my $eval_return = eval {
     Test::Weaken::leaks(
         {   constructor => sub { MyObject->new },
@@ -136,16 +159,23 @@ my $eval_return = eval {
     );
     1;
 };
+my $stderr = &{$restore};
+
 my $eval_result = 'proberef overwrite not caught';
 if ( not $eval_return ) {
     $eval_result = $EVAL_ERROR;
-    $eval_result =~ s/[^']*\z//xms;
-    $eval_result =~ s/0x[0-9a-fA-F]+/0xXXXXXXX/xmsg;
 }
 
+$eval_result =~ s{
+    [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+}{ at <FILE> line <LINE_NUMBER>}gxms;
+
 Test::Weaken::Test::is(
-    $eval_result,
-    q{Problem in ignore callback: arg was changed from 'strong REF at 0xXXXXXXX' to 'SCALAR at 0xXXXXXXX'},
+    ( $stderr . $eval_result ),
+    <<'EOS',
+Probe referent changed by ignore call
+Terminating ignore callbacks after finding 1 error(s) at <FILE> line <LINE_NUMBER>
+EOS
     'wrappered overwriting ignore'
 );
 
@@ -169,64 +199,87 @@ sub buggy_ignore {
 }
 ## use critic
 
-## use Marpa::Test::Display error callback snippet
+my %counted_error_expected = (
+    0 => <<'EOS',
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+    1 => <<'EOS',
+Probe referent changed by ignore call
+Terminating ignore callbacks after finding 1 error(s) at <FILE> line <LINE_NUMBER>
+EOS
+    2 => <<'EOS',
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Terminating ignore callbacks after finding 2 error(s) at <FILE> line <LINE_NUMBER>
+EOS
+    3 => <<'EOS',
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Terminating ignore callbacks after finding 3 error(s) at <FILE> line <LINE_NUMBER>
+EOS
+    4 => <<'EOS',
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+);
 
-{
-    my $error_callback_count = 0;
-    my $max_errors           = 100;
+sub counted_errors {
+    my ($error_count) = @_;
 
-    sub error_callback {
-        my ($standard_message, $before_signature,
-            $after_signature,  $probe_ref
-        ) = @_;
-        $error_callback_count++;
-        my $custom_message = "'$before_signature' -> '$after_signature'\n";
-        print {*STDERR} $custom_message
-            or croak("Cannot print STDERR: $ERRNO");
-        if ( $error_callback_count > $max_errors ) {
-            croak("Terminating after $max_errors errors");
-        }
-        return 1;
-    }
-}
-
-## no Marpa::Test::Display
-
-my $stderr = q{};
-open my $save_stderr, '>&STDERR';
-close STDERR;
-open STDERR, '>', \$stderr;
+    $restore     = divert_stderr();
+    $eval_return = eval {
 
 ## use Marpa::Test::Display check_ignore snippet
 
-Test::Weaken::leaks(
-    {   constructor => sub { MyObject->new },
-        ignore =>
-            Test::Weaken::check_ignore( \&buggy_ignore, \&error_callback ),
-    }
-);
+        Test::Weaken::leaks(
+            {   constructor => sub { MyObject->new },
+                ignore      => Test::Weaken::check_ignore(
+                    \&buggy_ignore, $error_count
+                ),
+            }
+        );
 
 ## no Marpa::Test::Display
 
-open STDERR, '>&', $save_stderr;
-close $save_stderr;
+    };
+    $stderr = &{$restore};
 
-# the exact addresses will vary, so just X them out
-$stderr =~ s/0x[0-9a-fA-F]*/0xXXXXXXX/gxms;
+    # the exact addresses will vary, so just X them out
+    $stderr =~ s/0x[0-9a-fA-F]*/0xXXXXXXX/gxms;
 
-Test::Weaken::Test::is( $stderr,
-    <<'EOS', 'wrappered overwriting ignore w/ error callback' );
-'strong REF at 0xXXXXXXX' -> 'strong REF at 0xXXXXXXX'
-'MyObject at 0xXXXXXXX' -> 'HASH at 0xXXXXXXX'
-'strong REF at 0xXXXXXXX' -> 'strong REF at 0xXXXXXXX'
-'strong REF at 0xXXXXXXX' -> 'strong REF at 0xXXXXXXX'
-'MyGlobal at 0xXXXXXXX' -> 'HASH at 0xXXXXXXX'
-'MyGlobal at 0xXXXXXXX' -> 'HASH at 0xXXXXXXX'
-'strong REF at 0xXXXXXXX' -> 'strong REF at 0xXXXXXXX'
-'ARRAY at 0xXXXXXXX' -> 'ARRAY at 0xXXXXXXX'
-'strong REF at 0xXXXXXXX' -> 'strong REF at 0xXXXXXXX'
-'ARRAY at 0xXXXXXXX' -> 'ARRAY at 0xXXXXXXX'
-EOS
+    $stderr .= $EVAL_ERROR if not $eval_return;
+
+    $stderr =~ s{
+        [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+    }{ at <FILE> line <LINE_NUMBER>}gxms;
+
+    Test::Weaken::Test::is(
+        $stderr,
+        $counted_error_expected{$error_count},
+        "wrappered overwriting ignore, max_errors=$error_count"
+    );
+
+    return 1;
+}
+
+counted_errors(0);
+counted_errors(1);
+counted_errors(2);
+counted_errors(3);
+counted_errors(4);
 
 sub noop_ignore { return 0; }
 
@@ -262,8 +315,9 @@ if ( not $test ) {
     pass('cycle w/ copying ignore');
 }
 else {
+    my $unfreed = $test->unfreed_proberefs;
     Test::Weaken::Test::is(
-        Data::Dumper->Dump( [ $test->unfreed_proberefs ], [qw(unfreed)] ),
+        Data::Dumper->Dump( [$unfreed], [qw(unfreed)] ),
         <<'EOS',
 $unfreed = [
              \\\$unfreed->[0],
@@ -275,23 +329,24 @@ EOS
     );
 }
 
-$stderr = q{};
-open $save_stderr, '>&STDERR';
-close STDERR;
-open STDERR, '>', \$stderr;
+$restore     = divert_stderr();
+$eval_return = eval {
 
-$test = Test::Weaken::leaks(
-    {   constructor => sub { MyCycle->new },
-        ignore =>
-            Test::Weaken::check_ignore( \&copying_ignore, \&error_callback ),
-    }
-);
+    $test = Test::Weaken::leaks(
+        {   constructor => sub { MyCycle->new },
+            ignore => Test::Weaken::check_ignore( \&copying_ignore, 2 ),
+        }
+    );
+};
+$stderr = &{$restore};
+
 if ( not $test ) {
     pass('cycle w/ copying & error callback');
 }
 else {
+    my $unfreed = $test->unfreed_proberefs;
     Test::Weaken::Test::is(
-        Data::Dumper->Dump( [ $test->unfreed_proberefs ], [qw(unfreed)] ),
+        Data::Dumper->Dump( [$unfreed], [qw(unfreed)] ),
         <<'EOS',
 $unfreed = [
              \\\$unfreed->[0],
@@ -305,11 +360,241 @@ EOS
 
 # the exact addresses will vary, so just X them out
 $stderr =~ s/0x[0-9a-fA-F]*/0xXXXXXXX/gxms;
+$stderr .= $EVAL_ERROR if not $eval_return;
+$stderr =~ s{
+    [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+}{ at <FILE> line <LINE_NUMBER>}gxms;
+
 Test::Weaken::Test::is(
     $stderr,
-    qq{'weak REF at 0xXXXXXXX' -> 'strong REF at 0xXXXXXXX'\n},
+    <<'EOS',
+Probe referent strengthened by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
     'stderr for cycle w/ copying'
 );
 
-open STDERR, '>&', $save_stderr;
-close $save_stderr;
+sub cause_deep_problem {
+    my ($proberef) = @_;
+    if (    ref $proberef eq 'REF'
+        and Scalar::Util::reftype ${$proberef} eq 'HASH'
+        and exists ${$proberef}->{one} )
+    {
+        ${$proberef}->{one}->{bad} = 42;
+    }
+    return 0;
+}
+
+my %counted_compare_depth_expected = (
+    0 => <<'EOS',
+$proberef_before_callback = \bless( {
+                                       'one' => {
+                                                  'two' => {
+                                                             'three' => 4
+                                                           }
+                                                }
+                                     }, 'DeepObject' );
+$proberef_after_callback = \bless( {
+                                      'one' => {
+                                                 'bad' => 42,
+                                                 'two' => {
+                                                            'three' => 4
+                                                          }
+                                               }
+                                    }, 'DeepObject' );
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+    1 => <<'EOS',
+EOS
+    2 => <<'EOS',
+EOS
+    3 => <<'EOS',
+$proberef_before_callback = \bless( {
+                                       'one' => {
+                                                  'two' => 'HASH(0xXXXXXXX)'
+                                                }
+                                     }, 'DeepObject' );
+$proberef_after_callback = \bless( {
+                                      'one' => {
+                                                 'bad' => 42,
+                                                 'two' => 'HASH(0xXXXXXXX)'
+                                               }
+                                    }, 'DeepObject' );
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+    4 => <<'EOS',
+$proberef_before_callback = \bless( {
+                                       'one' => {
+                                                  'two' => {
+                                                             'three' => 4
+                                                           }
+                                                }
+                                     }, 'DeepObject' );
+$proberef_after_callback = \bless( {
+                                      'one' => {
+                                                 'bad' => 42,
+                                                 'two' => {
+                                                            'three' => 4
+                                                          }
+                                               }
+                                    }, 'DeepObject' );
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+);
+
+sub counted_compare_depth {
+    my ($compare_depth) = @_;
+
+    $restore     = divert_stderr();
+    $eval_return = eval {
+        Test::Weaken::leaks(
+            {   constructor => sub { DeepObject->new },
+                ignore      => Test::Weaken::check_ignore(
+                    \&cause_deep_problem, 99,
+                    $compare_depth,       $compare_depth
+                ),
+            }
+        );
+    };
+    $stderr = &{$restore};
+
+    # the exact addresses will vary, so just X them out
+    $stderr =~ s/0x[0-9a-fA-F]*/0xXXXXXXX/gxms;
+
+    $stderr .= $EVAL_ERROR if not $eval_return;
+
+    $stderr =~ s{
+        [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+    }{ at <FILE> line <LINE_NUMBER>}gxms;
+
+    Test::Weaken::Test::is(
+        $stderr,
+        $counted_compare_depth_expected{$compare_depth},
+        "deep problem, compare depth=$compare_depth"
+    );
+
+    return 1;
+}
+
+counted_compare_depth(0);
+counted_compare_depth(1);
+counted_compare_depth(2);
+counted_compare_depth(3);
+counted_compare_depth(4);
+
+my %counted_reporting_depth_expected = (
+    0 => <<'EOS',
+$proberef_before_callback = \bless( {
+                                       'one' => {
+                                                  'two' => {
+                                                             'three' => 4
+                                                           }
+                                                }
+                                     }, 'DeepObject' );
+$proberef_after_callback = \bless( {
+                                      'one' => {
+                                                 'bad' => 42,
+                                                 'two' => {
+                                                            'three' => 4
+                                                          }
+                                               }
+                                    }, 'DeepObject' );
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+    1 => <<'EOS',
+$proberef_before_callback = \'DeepObject=HASH(0xXXXXXXX)';
+$proberef_after_callback = \'DeepObject=HASH(0xXXXXXXX)';
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+    2 => <<'EOS',
+$proberef_before_callback = \bless( {
+                                       'one' => 'HASH(0xXXXXXXX)'
+                                     }, 'DeepObject' );
+$proberef_after_callback = \bless( {
+                                      'one' => 'HASH(0xXXXXXXX)'
+                                    }, 'DeepObject' );
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+    3 => <<'EOS',
+$proberef_before_callback = \bless( {
+                                       'one' => {
+                                                  'two' => 'HASH(0xXXXXXXX)'
+                                                }
+                                     }, 'DeepObject' );
+$proberef_after_callback = \bless( {
+                                      'one' => {
+                                                 'bad' => 42,
+                                                 'two' => 'HASH(0xXXXXXXX)'
+                                               }
+                                    }, 'DeepObject' );
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+    4 => <<'EOS',
+$proberef_before_callback = \bless( {
+                                       'one' => {
+                                                  'two' => {
+                                                             'three' => 4
+                                                           }
+                                                }
+                                     }, 'DeepObject' );
+$proberef_after_callback = \bless( {
+                                      'one' => {
+                                                 'bad' => 42,
+                                                 'two' => {
+                                                            'three' => 4
+                                                          }
+                                               }
+                                    }, 'DeepObject' );
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+EOS
+);
+
+sub counted_reporting_depth {
+    my ($reporting_depth) = @_;
+
+    $restore     = divert_stderr();
+    $eval_return = eval {
+## use Marpa::Test::Display check_ignore 4 arg snippet
+        $test = Test::Weaken::leaks(
+            {   constructor => sub { DeepObject->new },
+                ignore      => Test::Weaken::check_ignore(
+                    \&cause_deep_problem, 99, 0, $reporting_depth
+                ),
+            }
+        );
+## no Marpa::Test::Display
+    };
+    $stderr = &{$restore};
+
+    # the exact addresses will vary, so just X them out
+    $stderr =~ s/0x[0-9a-fA-F]*/0xXXXXXXX/gxms;
+
+    $stderr .= $EVAL_ERROR if not $eval_return;
+
+    $stderr =~ s{
+        [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+    }{ at <FILE> line <LINE_NUMBER>}gxms;
+
+    Test::Weaken::Test::is(
+        $stderr,
+        $counted_reporting_depth_expected{$reporting_depth},
+        "deep problem, reporting depth=$reporting_depth"
+    );
+
+    return 1;
+}
+
+counted_reporting_depth(0);
+counted_reporting_depth(1);
+counted_reporting_depth(2);
+counted_reporting_depth(3);
+counted_reporting_depth(4);
+
