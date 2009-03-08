@@ -46,8 +46,8 @@ package MyObject;
 sub new {
     my ($class) = @_;
     return bless {
-        one => MyGlobal->new('foo'),
-        two => MyGlobal->new('bar'),
+        one => MyGlobal->new('ishtar'),
+        two => MyGlobal->new('ereskigal'),
     }, $class;
 }
 
@@ -88,7 +88,7 @@ sub ignore_my_global {
     return ( Scalar::Util::blessed($thing) && $thing->isa('MyGlobal') );
 }
 
-my $test = Test::Weaken::leaks(
+my $tester = Test::Weaken::leaks(
     {   constructor => sub { MyObject->new },
         ignore      => \&ignore_my_global,
     }
@@ -96,51 +96,51 @@ my $test = Test::Weaken::leaks(
 
 ## no Marpa::Test::Display
 
-if ( not $test ) {
+if ( not $tester ) {
     pass('good ignore');
 }
 else {
-    Test::Weaken::Test::is( $test->unfreed_proberefs, q{}, 'good ignore' );
+    Test::Weaken::Test::is( $tester->unfreed_proberefs, q{}, 'good ignore' );
 }
 
-$test = Test::Weaken::leaks(
+$tester = Test::Weaken::leaks(
     {   constructor => sub { MyObject->new },
         ignore      => sub { return; }
     }
 );
-Test::Weaken::Test::is( Dumper( $test->unfreed_proberefs ),
+Test::Weaken::Test::is( Dumper( $tester->unfreed_proberefs ),
     <<'EOS', 'no-op ignore' );
 $VAR1 = [
           bless( {
                    'array' => [
-                                'something for foo'
+                                'something for ereskigal'
                               ],
-                   'name' => 'foo'
-                 }, 'MyGlobal' ),
-          bless( {
-                   'array' => [
-                                'something for bar'
-                              ],
-                   'name' => 'bar'
+                   'name' => 'ereskigal'
                  }, 'MyGlobal' ),
           $VAR1->[0]{'array'},
-          $VAR1->[1]{'array'}
+          bless( {
+                   'array' => [
+                                'something for ishtar'
+                              ],
+                   'name' => 'ishtar'
+                 }, 'MyGlobal' ),
+          $VAR1->[2]{'array'}
         ];
 EOS
 
 ## use Marpa::Test::Display check_ignore 1 arg snippet
-$test = Test::Weaken::leaks(
+$tester = Test::Weaken::leaks(
     {   constructor => sub { MyObject->new },
         ignore => Test::Weaken::check_ignore( \&ignore_my_global ),
     }
 );
 ## no Marpa::Test::Display
 
-if ( not $test ) {
+if ( not $tester ) {
     pass('wrappered good ignore');
 }
 else {
-    Test::Weaken::Test::is( $test->unfreed_proberefs, q{},
+    Test::Weaken::Test::is( $tester->unfreed_proberefs, q{},
         'wrappered good ignore' );
 }
 
@@ -207,6 +207,12 @@ Probe referent changed by ignore call
 Above errors reported at <FILE> line <LINE_NUMBER>
 Probe referent changed by ignore call
 Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
 EOS
     1 => <<'EOS',
 Probe referent changed by ignore call
@@ -226,7 +232,13 @@ Above errors reported at <FILE> line <LINE_NUMBER>
 Probe referent changed by ignore call
 Terminating ignore callbacks after finding 3 error(s) at <FILE> line <LINE_NUMBER>
 EOS
-    4 => <<'EOS',
+    9 => <<'EOS',
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
+Probe referent changed by ignore call
+Above errors reported at <FILE> line <LINE_NUMBER>
 Probe referent changed by ignore call
 Above errors reported at <FILE> line <LINE_NUMBER>
 Probe referent changed by ignore call
@@ -279,20 +291,20 @@ counted_errors(0);
 counted_errors(1);
 counted_errors(2);
 counted_errors(3);
-counted_errors(4);
+counted_errors(9);
 
 sub noop_ignore { return 0; }
 
-$test = Test::Weaken::leaks(
+$tester = Test::Weaken::leaks(
     {   constructor => sub { MyCycle->new },
         ignore      => \&noop_ignore,
     }
 );
-if ( not $test ) {
+if ( not $tester ) {
     pass('cycle w/ no-op ignore');
 }
 else {
-    Test::Weaken::Test::is( $test->unfreed_proberefs, q{},
+    Test::Weaken::Test::is( $tester->unfreed_proberefs, q{},
         'cycle w/ no-op ignore' );
 }
 
@@ -306,16 +318,16 @@ sub copying_ignore {
 }
 ## use critic
 
-$test = Test::Weaken::leaks(
+$tester = Test::Weaken::leaks(
     {   constructor => sub { MyCycle->new },
         ignore      => \&copying_ignore,
     }
 );
-if ( not $test ) {
+if ( not $tester ) {
     pass('cycle w/ copying ignore');
 }
 else {
-    my $unfreed = $test->unfreed_proberefs;
+    my $unfreed = $tester->unfreed_proberefs;
     Test::Weaken::Test::is(
         Data::Dumper->Dump( [$unfreed], [qw(unfreed)] ),
         <<'EOS',
@@ -332,7 +344,7 @@ EOS
 $restore     = divert_stderr();
 $eval_return = eval {
 
-    $test = Test::Weaken::leaks(
+    $tester = Test::Weaken::leaks(
         {   constructor => sub { MyCycle->new },
             ignore => Test::Weaken::check_ignore( \&copying_ignore, 2 ),
         }
@@ -340,11 +352,11 @@ $eval_return = eval {
 };
 $stderr = &{$restore};
 
-if ( not $test ) {
+if ( not $tester ) {
     pass('cycle w/ copying & error callback');
 }
 else {
-    my $unfreed = $test->unfreed_proberefs;
+    my $unfreed = $tester->unfreed_proberefs;
     Test::Weaken::Test::is(
         Data::Dumper->Dump( [$unfreed], [qw(unfreed)] ),
         <<'EOS',
@@ -563,7 +575,7 @@ sub counted_reporting_depth {
     $restore     = divert_stderr();
     $eval_return = eval {
 ## use Marpa::Test::Display check_ignore 4 arg snippet
-        $test = Test::Weaken::leaks(
+        $tester = Test::Weaken::leaks(
             {   constructor => sub { DeepObject->new },
                 ignore      => Test::Weaken::check_ignore(
                     \&cause_deep_problem, 99, 0, $reporting_depth
