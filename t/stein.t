@@ -11,7 +11,7 @@ use Test::More tests => 4;
 use lib 't/lib';
 use Test::Weaken::Test;
 
-BEGIN { use_ok('Test::Weaken') }
+BEGIN { Test::More::use_ok('Test::Weaken') }
 
 sub brief_result {
     my $test              = shift;
@@ -69,20 +69,20 @@ sub stein_w2 {
 }
 
 Test::Weaken::Test::is(
-    brief_result( new Test::Weaken( \&stein_1 ) ),
-    'total: weak=0; strong=5; unfreed: weak=0; strong=4',
+    brief_result( Test::Weaken->new( \&stein_1 ) ),
+    'total: weak=0; strong=22; unfreed: weak=0; strong=21',
     q{Stein's test}
 );
 
 Test::Weaken::Test::is(
-    brief_result( new Test::Weaken( \&stein_w1 ) ),
-    'total: weak=0; strong=5; unfreed: weak=0; strong=2',
+    brief_result( Test::Weaken->new( \&stein_w1 ) ),
+    'total: weak=1; strong=21; unfreed: weak=0; strong=11',
     q{Stein's test weakened once}
 );
 
 Test::Weaken::Test::is(
-    brief_result( new Test::Weaken( \&stein_w2 ) ),
-    'total: weak=0; strong=5; unfreed: weak=0; strong=0',
+    brief_result( Test::Weaken->new( \&stein_w2 ) ),
+    'total: weak=2; strong=20; unfreed: weak=0; strong=0',
     q{Stein's test weakened twice}
 );
 
