@@ -7,7 +7,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '2.003_003';
+our $VERSION   = '2.003_004';
 
 ## no critic (BuiltinFunctions::ProhibitStringyEval)
 $VERSION = eval $VERSION;
@@ -93,11 +93,21 @@ sub follow {
                         push @child_probes, \( $follow_probe->[$i] );
                     }
                 }
+                if ( defined $contents ) {
+                    my $safe_copy = $follow_probe;
+                    push @child_probes,
+                        map { \$_ } ( $contents->($safe_copy) );
+                }
                 last FIND_CHILDREN;
             } ## end if ( $object_type eq 'ARRAY' )
 
             if ( $object_type eq 'HASH' ) {
                 @child_probes = map { \$_ } values %{$follow_probe};
+                if ( defined $contents ) {
+                    my $safe_copy = $follow_probe;
+                    push @child_probes,
+                        map { \$_ } ( $contents->($safe_copy) );
+                }
                 last FIND_CHILDREN;
             }
 
@@ -715,7 +725,7 @@ for many cases,
 but not for all.
 Ways to deal with
 descendants that are not contents,
-such as globals, and
+such as globals,
 are dealt with in L<the section on persistent objects|"Persistent Objects">.
 Ways to deal with
 contents that are not descendants,
@@ -726,7 +736,8 @@ L<the section on nieces|"Nieces">.
 =head2 Persistent Objects
 
 As a practical matter, a descendant that is not
-part of a test structure is only a problem
+part of the contents of a
+test structure is only a problem
 if its lifetime extends beyond that of the test
 structure.
 A descendant that stays around after
@@ -741,8 +752,8 @@ But a persistent object is not expected to
 disappear when the test structure goes away.
 
 We need to
-determine which of the unfreed data objects are memory leaks,
-and which are persistent data objects.
+separate the unfreed data objects which are memory leaks,
+from those which are persistent data objects.
 It's usually easiest to do this after the test by
 examining the return value of L</unfreed_proberefs>.
 The L</ignore> named argument can also be used
@@ -818,10 +829,6 @@ it takes a lot of craft to avoid
 leaving
 unintended references to the test structure in that calling environment.
 It is easy to get this wrong.
-
-When the calling environment retains a reference
-to a data object inside the test structure,
-the result usually appears as a memory leak.
 In other words,
 mistakes in setting up the test structure
 create memory leaks that are artifacts of the test environment.
@@ -851,8 +858,6 @@ C<Test::Weaken> makes it the easy thing to do.
 Nothing prevents a user from
 subverting the closure-local strategy.
 A test structure constructor
-can refer to data in global or other scopes.
-And a test structure constructor
 can return a reference to a test structure
 created from Perl data objects in any scope the user desires.
 
@@ -959,9 +964,7 @@ is_file($_, 't/ignore.t', 'ignore snippet')
 
     sub ignore_my_global {
         my ($probe) = @_;
-        return unless Scalar::Util::reftype $probe eq 'REF';
-        my $thing = ${$probe};
-        return ( Scalar::Util::blessed($thing) && $thing->isa('MyGlobal') );
+        return ( Scalar::Util::blessed($probe) && $probe->isa('MyGlobal') );
     }
 
     my $tester = Test::Weaken::leaks(
@@ -1030,6 +1033,19 @@ callback.
 The result of modifying the probe referents might be
 an exception, an abend, an infinite loop, or erroneous results.
 
+The example above shows a common use of the C<ignore>
+callback.
+In this a blessed object is ignored, I<but not>
+the references to it.
+This is typically what is wanted when you know certain
+objects are outside the contents of your test structure,
+but you keep references to those objects that are part of
+the contents of your test structure.
+In that case, you want to know if the references are leaking,
+but you do not want to see reports 
+when the outside objects themselves are persistent.
+Compare this with the example for the C<contents> callback below.
+
 C<ignore> callbacks are best kept simple.
 Defer as much of the analysis as you can
 until after the test is completed.
@@ -1054,10 +1070,11 @@ is_file($_, 't/contents.t', 'contents sub snippet')
 
     sub contents {
         my ($probe) = @_;
-        return unless Scalar::Util::blessed( ${$probe} );
-        my $obj = ${$probe};
-        return unless $obj->isa('MyObject');
-        return ( ${$probe}->data, ${$probe}->moredata );
+        return unless Scalar::Util::reftype $probe eq 'REF';
+        my $thing = ${$probe};
+        return unless Scalar::Util::blessed($thing);
+        return unless $thing->isa('MyObject');
+        return ( $thing->data, $thing->moredata );
     } ## end sub MyObject::contents
 
 =begin Marpa::Test::Display:
@@ -1113,10 +1130,19 @@ where C<$safe_copy> is a copy of the probe reference to
 another Perl reference.
 
 The C<contents> callback is made once
-for every reference which is
+for every reference, array or hash which is
 about to be followed.
 The C<contents> callback is not made for
-Perl data objects other than references.
+Perl data objects other than references, arrays and hashes.
+
+The example of a C<contents> above adds data objects whenever it
+encounters a I<reference> to a blessed object.
+Compare this with the example for the C<ignore> callback above.
+Checking for references to blessed objects will not produce the same
+behavior as checking for the blessed objects themselves --
+there may be many references to a single
+object.
+Users need to be clear about the behavior they expect before implementing.
 
 The callback subroutine will be evaluated in array context.
 It should return a list of additional Perl data objects
@@ -1404,8 +1430,7 @@ the referent address that both zero addition and C<refaddr> return.
 Sometimes, when you are interested in why an object is not being freed,
 you want to seek out the reference
 that keeps the object's refcount above zero.
-Kevin Ryde reports that L<Devel::FindRef>
-can be useful for this.
+L<Devel::FindRef> can be useful for this.
 
 =head2 More about Quasi-unique Addresses
 
@@ -1749,12 +1774,12 @@ does not have at present.
 Thanks to jettero, Juerd and perrin of Perlmonks for their advice.
 Thanks to Lincoln Stein (developer of L<Devel::Cycle>) for
 test cases and other ideas.
-
-After the first release of C<Test::Weaken>,
 Kevin Ryde made several important suggestions
-and provided test cases.
-These provided the impetus
-for version 2.000000 and 4.000000.
+and provided the test cases which
+provided the impetus
+for version 2.000000.
+Kevin played the same role for version 4.000000, and provided several
+important patches as well.
 
 =head1 LICENSE AND COPYRIGHT
 
