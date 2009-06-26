@@ -7,7 +7,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '2.003_004';
+our $VERSION   = '2.003_005';
 
 ## no critic (BuiltinFunctions::ProhibitStringyEval)
 $VERSION = eval $VERSION;
@@ -40,6 +40,8 @@ use English qw( -no_match_vars );
 use Carp;
 use Scalar::Util qw(refaddr reftype isweak weaken);
 
+my %TRACKED_TYPE = map { ( $_, 1 ) } qw(REF SCALAR VSTRING HASH ARRAY CODE);
+
 sub follow {
     my ( $self, $base_probe ) = @_;
     my $ignore          = $self->{ignore};
@@ -70,10 +72,7 @@ sub follow {
 
         my $object_type = reftype $follow_probe;
 
-        if ( defined $ignore ) {
-            my $safe_copy = $follow_probe;
-            next FOLLOW_OBJECT if $ignore->($safe_copy);
-        }
+        my @child_probes = ();
 
         if ($trace_following) {
             ## no critic (ValuesAndExpressions::ProhibitLongChainsOfMethodCalls)
@@ -84,94 +83,48 @@ sub follow {
             ## use critic
         }
 
-        my @child_probes = ();
+        if ( defined $contents ) {
+            my $safe_copy = $follow_probe;
+            push @child_probes, map { \$_ } ( $contents->($safe_copy) );
+        }
 
         FIND_CHILDREN: {
+
+            if ( defined $ignore ) {
+                my $safe_copy = $follow_probe;
+                last FIND_CHILDREN if $ignore->($safe_copy);
+            }
+
             if ( $object_type eq 'ARRAY' ) {
                 foreach my $i ( 0 .. $#{$follow_probe} ) {
                     if ( exists $follow_probe->[$i] ) {
                         push @child_probes, \( $follow_probe->[$i] );
                     }
                 }
-                if ( defined $contents ) {
-                    my $safe_copy = $follow_probe;
-                    push @child_probes,
-                        map { \$_ } ( $contents->($safe_copy) );
-                }
                 last FIND_CHILDREN;
             } ## end if ( $object_type eq 'ARRAY' )
 
             if ( $object_type eq 'HASH' ) {
-                @child_probes = map { \$_ } values %{$follow_probe};
-                if ( defined $contents ) {
-                    my $safe_copy = $follow_probe;
-                    push @child_probes,
-                        map { \$_ } ( $contents->($safe_copy) );
-                }
+                push @child_probes, map { \$_ } values %{$follow_probe};
                 last FIND_CHILDREN;
             }
 
             if ( $object_type eq 'REF' ) {
-                @child_probes = ( ${$follow_probe} );
-                if ( defined $contents ) {
-                    my $safe_copy = $follow_probe;
-                    push @child_probes,
-                        map { \$_ } ( $contents->($safe_copy) );
-                }
+                push @child_probes, ${$follow_probe};
                 last FIND_CHILDREN;
             } ## end if ( $object_type eq 'REF' )
 
         } ## end FIND_CHILDREN:
 
-        next FOLLOW_OBJECT if not scalar @child_probes;
+        push @follow_probes, @child_probes;
 
         CHILD_PROBE: for my $child_probe (@child_probes) {
 
             my $child_type = Scalar::Util::reftype $child_probe;
 
-            my $new_tracking_probe;
-            my $new_follow_probe;
+            next CHILD_PROBE unless $TRACKED_TYPE{$child_type};
 
-            DECIDE_TRACK_OR_FOLLOW: {
-
-                if ( $child_type eq 'REF' ) {
-                    $new_follow_probe = $new_tracking_probe =
-                        \${$child_probe};
-                    last DECIDE_TRACK_OR_FOLLOW;
-                }
-
-                if (   $child_type eq 'SCALAR'
-                    or $child_type eq 'VSTRING' )
-                {
-                    $new_tracking_probe = \${$child_probe};
-                    last DECIDE_TRACK_OR_FOLLOW;
-                }
-
-                if ( $child_type eq 'HASH' ) {
-                    $new_follow_probe = $new_tracking_probe =
-                        \%{$child_probe};
-                    last DECIDE_TRACK_OR_FOLLOW;
-                }
-
-                if ( $child_type eq 'ARRAY' ) {
-                    $new_follow_probe = $new_tracking_probe =
-                        \@{$child_probe};
-                    last DECIDE_TRACK_OR_FOLLOW;
-                }
-
-                if ( $child_type eq 'CODE' ) {
-                    $new_tracking_probe = \&{$child_probe};
-                    last DECIDE_TRACK_OR_FOLLOW;
-                }
-
-                # FORMAT, LVALUE, GLOB, IO are not tracked or followed
-
-            } ## end DECIDE_TRACK_OR_FOLLOW:
-
-            push @follow_probes, $new_follow_probe
-                if defined $new_follow_probe;
-
-            next CHILD_PROBE unless defined $new_tracking_probe;
+            my $new_tracking_probe = $child_probe;
 
             next CHILD_PROBE if $already_tracked{ $new_tracking_probe + 0 }++;
 
@@ -697,17 +650,15 @@ The closure should return
 a reference to the B<test structure>.
 This reference is called the B<test structure reference>.
 
-=head2 Followed Objects and Descendants
+=head2 Children and Descendants
 
-A Perl data object is called a B<followed object>
-if C<Test::Weaken> examines it while it is looking for
-the contents of the test data structure.
-By default, C<Test::Weaken> determines the contents by recursing
-through the
-descendants of the top object of the test data structure.
-
+By default, C<Test::Weaken> determines the contents of a data structure
+by recursing through the
+descendants
+of the top object of the test data structure.
 The B<descendants> of a Perl data object are itself,
 its children, and any children of one of its descendants.
+
 The B<child> of a reference is its referent.
 The B<children> of an array are
 its elements.
@@ -740,8 +691,9 @@ part of the contents of a
 test structure is only a problem
 if its lifetime extends beyond that of the test
 structure.
-A descendant that stays around after
-the test structure is called a B<persistent object>.
+A descendant that is expected to say around after
+the test structure is destroyed
+is called a B<persistent object>.
 
 A persistent object is not a memory leak.
 That's the problem.
@@ -829,10 +781,10 @@ it takes a lot of craft to avoid
 leaving
 unintended references to the test structure in that calling environment.
 It is easy to get this wrong.
-In other words,
-mistakes in setting up the test structure
+Those unintended references will
 create memory leaks that are artifacts of the test environment.
-These artifacts are very difficult to sort out from the real thing.
+Leaks that are artifacts of the test environment
+are very difficult to sort out from the real thing.
 
 The B<closure-local strategy> is the easiest way
 to avoid leaving unintended references to the
@@ -847,13 +799,6 @@ it relatively easy to be sure that nothing is left behind
 that will hold an unintended reference
 to any of the contents
 of the test structure.
-
-To help the user to follow the closure-local strategy,
-C<Test::Weaken> requires that its test structure reference
-be the return value of a closure.
-The closure-local strategy is safe.
-It is almost always right thing to do.
-C<Test::Weaken> makes it the easy thing to do.
 
 Nothing prevents a user from
 subverting the closure-local strategy.
@@ -980,22 +925,22 @@ is_file($_, 't/ignore.t', 'ignore snippet')
 =end Marpa::Test::Display:
 
 The B<ignore> argument is optional.
-It can be used to prevent C<Test::Weaken> from following
-and tracking individual probe references, selected by
-the user.
-Use of the C<ignore> argument should be avoided
-when possible.
+It can be used to make a specific decision,
+for each Perl data object,
+on whether that object and its children are tracked or ignored.
+Use of the C<ignore> argument should be avoided.
 Filtering the probe references that are
 returned by
 L<unfreed_proberefs>
 is easier, safer and
 faster.
-The C<ignore> argument is provided for situations
-where filtering after the fact
-is not practical.
-One such
-situation is when
-large or complicated sub-objects need to be filtered out of the results.
+But
+filtering after the fact
+is not always practical.
+For example, if large or complicated sub-objects
+need to be filtered out,
+it may be easiest to do so
+before they end up in the results.
 
 When specified, the value of the C<ignore> argument must be a
 reference to a callback subroutine.
@@ -1009,11 +954,11 @@ The C<ignore> callback will be made once
 for every Perl data object when it is about
 to be tracked,
 and once for every data object when it is about to be
-followed.
+examined for children.
 The callback subroutine should return a Perl true value if the probe reference is
-to a data object that should be ignored --
-that is, neither followed or tracked.
-Otherwise the callback subroutine should return a Perl false value.
+to a data object which should be ignored, along with its children.
+If the data object and its children should be tracked,
+the callback subroutine should return a Perl false.
 
 For safety, C<Test::Weaken> does not pass its internal
 probe reference
@@ -1039,7 +984,7 @@ In this a blessed object is ignored, I<but not>
 the references to it.
 This is typically what is wanted when you know certain
 objects are outside the contents of your test structure,
-but you keep references to those objects that are part of
+but you have references to those objects that I<are> part of
 the contents of your test structure.
 In that case, you want to know if the references are leaking,
 but you do not want to see reports 
@@ -1105,8 +1050,9 @@ is_file($_, 't/contents.t', 'contents named arg snippet')
 
 The B<contents> argument is optional.
 It can be used to tell C<Test::Weaken> about additional
-Perl data objects that need to be followed in order to find
-all of the contents of the test data structure.
+Perl data objects that need to be included,
+along with their children,
+in order to find all of the contents of the test data structure.
 Use of the C<contents> argument should be avoided
 when possible.
 Instead of using the C<contents> argument, it is
@@ -1120,6 +1066,7 @@ If, for example,
 creating the wrapper structure would involve a recursive
 descent through the lab rat object,
 using the C<contents> argument may be easiest.
+Using the C<contents> callback can impose a significant overhead.
 
 When specified, the value of the C<contents> argument must be a
 reference to a callback subroutine.
@@ -1128,12 +1075,10 @@ C<Test::Weaken>'s call to it will be the equivalent
 of C<< $contents->($safe_copy) >>,
 where C<$safe_copy> is a copy of the probe reference to
 another Perl reference.
-
 The C<contents> callback is made once
-for every reference, array or hash which is
-about to be followed.
-The C<contents> callback is not made for
-Perl data objects other than references, arrays and hashes.
+for every Perl data object
+when that Perl data object is
+about to be examined for children.
 
 The example of a C<contents> above adds data objects whenever it
 encounters a I<reference> to a blessed object.
@@ -1146,8 +1091,21 @@ Users need to be clear about the behavior they expect before implementing.
 
 The callback subroutine will be evaluated in array context.
 It should return a list of additional Perl data objects
-to be followed.
+to be tracked and examined for children.
 This list may be empty.
+
+The C<contents> and C<ignore> callbacks can be used together.
+If, for an argument Perl data object, the C<ignore> callback returns
+true, the objects returned by the C<contents> callback, and their
+children, will be used B<instead> of the default children for the argument data object.
+If, for an argument Perl data object, the C<ignore> callback returns
+false, the objects returned by the C<contents> callback, and their
+children, will be used B<in addition> to the default children for the argument data object.
+Together,
+the C<contents> and C<ignore> callbacks can be used
+to completely customize
+C<Test::Weaken>'s default behaviors
+for determining the contents of a data structure.
 
 For safety, C<Test::Weaken> does not pass its internal
 probe reference
@@ -1166,11 +1124,6 @@ should be left unchanged by the C<contents>
 callback.
 The result of modifying the probe referents might be
 an exception, an abend, an infinite loop, or erroneous results.
-
-The C<contents> callbacks is
-called once for every reference that it is about
-to be followed.
-This can be a significant overhead.
 
 =back
 
@@ -1280,8 +1233,8 @@ is_file($_, 't/snippet.t', 'probe_count snippet')
 Returns the total number of probe references in the test,
 including references to freed data objects.
 This is the count of probe references
-after C<Test::Weaken> was finished following the test structure reference
-recursively,
+after C<Test::Weaken> was finished finding the descendants of
+the test structure reference,
 but before C<Test::Weaken> called the test structure destructor or reset the
 test structure reference to C<undef>.
 Throws an exception if there is a problem,
@@ -1615,14 +1568,15 @@ By default, C<Test::Weaken> exports nothing.  Optionally, C<leaks> may be export
 
 C<Test::Weaken> first recurses through the test structure.
 Starting from the test structure reference,
-it follows and tracks objects recursively,
-as described above.
-The test structure is explored to unlimited depth,
-looking for data objects to track.
-Perl data objects visited during the recursion are recorded,
-and no object is visited twice.
+it examines data objects for children recursively,
+until it has found the complete contents of the test structure.
+The test structure is explored to unlimited depth.
 For each data object, a
 probe reference is created.
+Data objects to be tracked are recorded.
+In the recursion, no object is visited twice,
+and infinite loops will not occur,
+even in the presence of cycles.
 
 Once recursion through the test structure is complete,
 the probe references are weakened.
@@ -1639,7 +1593,7 @@ the value of that probe reference will be C<undef>.
 If a probe reference is still defined at this point,
 it refers to an unfreed Perl data object.
 
-=head2 Data Objects by Type
+=head2 Builtin Types
 
 B<Builtin types> are
 the type names returned by L<Scalar::Util>'s
@@ -1648,44 +1602,21 @@ C<Scalar::Util::reftype> differs from Perl's C<ref> function.
 If an object was blessed into a package, C<ref> returns the package name,
 while C<reftype> returns the original builtin type of the object.
 
-=head3 ARRAY, HASH, and REF Objects
+=head2 Tracked Objects
 
-Objects of builtin type
-ARRAY, HASH, and REF
-are always both tracked and followed.
+By default,
+objects of builtin types ARRAY, HASH, REF,
+SCALAR, VSTRING, and CODE are tracked.
+By default,
+GLOB, IO, FORMAT and LVALUE objects are not tracked.
 
-=head3 SCALAR and VSTRING Objects
-
-Objects of builtin type SCALAR and VSTRING 
-are tracked.
-They do not hold internal references
-to other Perl data objects,
-so following them is meaningless.
-
-=head3 CODE Objects
-
-Objects of type CODE are tracked but are not followed.
-This can be seen as a limitation, because
-closures hold internal references to data objects.
-Future versions of C<Test::Weaken> may follow CODE objects.
-
-=head3 Objects That are Ignored
-
-An object is said to be B<ignored> if it is neither
-tracked or followed.
-All objects of builtin types GLOB, IO, FORMAT and LVALUE are ignored.
-
-The main reason
-to ignore
-FORMAT, IO and LVALUE objects is that
 C<Data::Dumper> does not deal with
-these objects gracefully.
-C<Data::Dumper>
-issues a cryptic warning whenever it encounters a
-FORMAT, IO or LVALUE object.
+IO and LVALUE objects
+gracefully,
+issuing a cryptic warning whenever it encounters them.
 Since C<Data::Dumper> is a Perl core module
-in extremely wide use, this suggests that these three
-objects types are, to put it mildly,
+in extremely wide use, this suggests that these IO and LVALUE
+objects are, to put it mildly,
 not commonly encountered as the contents of data structures.
 
 GLOB objects
@@ -1701,17 +1632,46 @@ them.
 IO objects, which are ignored because of C<Data::Dumper> issues,
 are often associated with GLOB objects.
 
-There are other reasons to ignore FORMAT
-objects.
-They are always global, and therefore
+FORMAT objects are always global, and therefore
 can be expected to be persistent.
 Use of FORMAT objects is officially deprecated.
+C<Data::Dumper> does not deal with
+FORMAT objects gracefully,
+issuing a cryptic warning whenever it encounters one.
 
-Objects
-in future implementations of Perl
-may have builtin types
-not described above.
-They will also be ignored.
+This version of C<Test::Weaken> might someday be run
+in a future version of Perl
+and encounter builtin types it does not know about.
+Those new builtin types will not be tracked.
+
+=head2 Examining Objects for Children
+
+Objects of builtin type
+ARRAY, HASH, and REF
+are, by default, examined for children,
+as described above.
+Objects of builtin type SCALAR and VSTRING 
+do not hold internal references
+to other Perl data objects,
+and so, by default, are not considered to have
+children.
+By default,
+the object types
+which are not tracked are not examined for children.
+
+By default, objects of type CODE are
+also not examined for children.
+Not examining CODE objects for children
+can be seen as a limitation, because
+closures do hold internal references to data objects.
+Future versions of C<Test::Weaken> may examine CODE objects.
+
+The default method of recursing through a test structure
+to find its contents can be customized.
+The C<ignore> callback can be used to force an object
+not to be examined for children.
+The C<contents> callback can be used to add user-determined
+contents to the test structure.
 
 =head1 AUTHOR
 
@@ -1771,7 +1731,7 @@ does not have at present.
 
 =head1 ACKNOWLEDGEMENTS
 
-Thanks to jettero, Juerd and perrin of Perlmonks for their advice.
+Thanks to jettero, Juerd, morgon and perrin of Perlmonks for their advice.
 Thanks to Lincoln Stein (developer of L<Devel::Cycle>) for
 test cases and other ideas.
 Kevin Ryde made several important suggestions
