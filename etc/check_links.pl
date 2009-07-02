@@ -9,9 +9,45 @@ use HTML::LinkExtor;
 use English qw( -no_match_vars );
 use Carp;
 use IO::Handle;
+use Fatal qw(open close);
 
-my $cpan_base      = 'http://search.cpan.org';
-my $marpa_doc_base = $cpan_base . '/~jkegl/Test-Weaken-1.001_000/lib/Test/';
+my $fh;
+open $fh, q{<}, 'lib/Test/Weaken.pm';
+LINE: while ( my $line = <$fh> ) {
+    if ($line =~ m{
+            ([\$*])
+            (
+                ([\w\:\']*)
+                \b
+                VERSION
+            ) \b .* \=
+            }xms
+        )
+    {
+        {
+
+            package Test::Weaken;
+            ## no critic (BuiltinFunctions::ProhibitStringyEval)
+            my $retval = eval $line;
+            ## use critic
+            if ( not defined $retval ) {
+                Carp::croak("eval of $line failed");
+            }
+            last LINE;
+        }
+    } ## end if ( $line =~ /             /xms )
+} ## end while ( my $line = <$fh> )
+close $fh;
+
+my $cpan_base = 'http://search.cpan.org';
+my $doc_base =
+      $cpan_base
+    . '/~jkegl/Test-Weaken-'
+    . $Test::Weaken::VERSION
+    . '/lib/Test/';
+
+print "Starting at $doc_base\n"
+    or Carp::croak("Cannot print: $ERRNO");
 
 my @url = qw(
     Weaken.pm
@@ -32,7 +68,7 @@ my %link_ok;
 $OUTPUT_AUTOFLUSH = 1;
 
 PAGE: for my $url (@url) {
-    $url = $marpa_doc_base . $url;
+    $url = $doc_base . $url;
 
     my $p  = HTML::LinkExtor->new( \&cb );
     my $ua = LWP::UserAgent->new;
