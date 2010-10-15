@@ -15,7 +15,14 @@ my %exclude = map { ( $_, 1 ) } qw(
 
 sub run_critic {
     my $file = shift;
-    my @cmd  = qw(perlcritic -profile author.t/perlcriticrc);
+    my @cmd  = (
+        #<<< perltidy messes this up
+        'perlcritic',
+        '--verbose', '%l:%c %p %r\n',
+        '--exclude', 'Dynamic::*',
+        '-profile', 'author.t/perlcriticrc',
+        #>>>
+    );
     push @cmd, $file;
     my ( $child_out, $child_in );
 
@@ -33,7 +40,7 @@ sub run_critic {
 
         if (WIFEXITED(
                 ## perlcritic does not seem to understand what CHILD_ERROR_NATIVE is
-                ## no critic (Subroutines::ProhibitCallsToUndeclaredSubs)
+                ## no critic (Variables::ProhibitPunctuationVars)
                 ${^CHILD_ERROR_NATIVE}
                     ## use critic
             ) != 1

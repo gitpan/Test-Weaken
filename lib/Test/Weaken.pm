@@ -7,7 +7,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.004000';
+our $VERSION   = '3.005_001';
 
 # use Smart::Comments;
 
@@ -469,7 +469,8 @@ sub Test::Weaken::check_ignore {
         my $array_context = wantarray;
 
         my $before_weak =
-            ( ref $probe_ref eq 'REF' and Scalar::Util::isweak( ${$probe_ref} ) );
+            ( ref $probe_ref eq 'REF'
+                and Scalar::Util::isweak( ${$probe_ref} ) );
         my $before_dump =
             Data::Dumper->new( [$probe_ref], [qw(proberef)] )
             ->Maxdepth($compare_depth)->Dump();
@@ -496,7 +497,8 @@ sub Test::Weaken::check_ignore {
         }
 
         my $after_weak =
-            ( ref $probe_ref eq 'REF' and Scalar::Util::isweak( ${$probe_ref} ) );
+            ( ref $probe_ref eq 'REF'
+                and Scalar::Util::isweak( ${$probe_ref} ) );
         my $after_dump =
             Data::Dumper->new( [$probe_ref], [qw(proberef)] )
             ->Maxdepth($compare_depth)->Dump();
@@ -688,12 +690,21 @@ L<bless builtin|perlfunc/"bless">, will be called a B<blessed object>.
 In this document,
 a Perl B<data structure> (often just called a B<structure>)
 is any group of Perl objects that are
-B<co-mortal> -- expected to be destroyed at the same time.
+co-mortal.
+B<Co-mortal> means that the maintainer
+expects those objects to be destroyed at the same time.
+For example, if a group of Perl objects is referenced,
+directly or indirectly,
+through a hash,
+and is referenced only through that hash,
+a programmer will usually expect all of those objects
+to be destroyed when the hash is.
+
+Perl data structures can be any set of
+Perl data objects.
 Since the question is one of I<expected> lifetime,
 whether an object is part of a data structure
 is, in the last analysis, subjective.
-Perl data structures can be any set of
-Perl data objects.
 
 =head2 The Contents of a Data Structure
 
@@ -732,10 +743,10 @@ then the second data object is an B<ancestor> of the first object.
 A data object is considered to be a descendant of itself,
 and also to be one of its own ancestors.
 
-L<Test::Weaken|/"NAME">'s default assumption,
+L<Test::Weaken|/"NAME">'s default assumption is
 that the contents of a data structure are the same as
-its descendants, works
-for many cases,
+its descendants.
+This works for many cases,
 but not for all.
 Ways to deal with
 descendants that are not contents,
@@ -825,10 +836,11 @@ the wrapper array itself, plus the contents
 of the lab rat.
 
 It is not always easy to find the right objects to put into the wrapper array.
-In particular, determining the contents of the lab rat may
-require what
-amounts to a recursive scan of the descendants of the lab rat's
+For example, determining the contents of the lab rat may
+require a recursive scan from the lab rat's
 top object.
+Depending on the logical structure of the lab rat,
+this may be far from trivial.
 
 As an alternative to using a wrapper,
 it is possible to have L<Test::Weaken|/"NAME"> add
@@ -1832,13 +1844,29 @@ L<http://search.cpan.org/dist/Test-Weaken>
 
 =head1 SEE ALSO
 
-Potential users will want to compare L<Test::Memory::Cycle> and
-L<Devel::Cycle>, which examine
-existing data structures non-destructively.
-L<Devel::Leak> also covers similar ground, although it requires
-Perl to be compiled with C<-DDEBUGGING> in order to work.  L<Devel::Cycle>
-looks inside closures if PadWalker is present, a feature L<Test::Weaken|/"NAME">
-does not have at present.
+L<Test::Weaken|/"NAME">
+at this point is robust
+and has 
+seen extensive use.
+Its tracking of memory is careful enough
+that it has even stumbled upon
+L<a bug in perl
+itself|http://rt.perl.org/rt3/Public/Bug/Display.html?id=67838>.
+
+L<Test::Weaken::Gtk2>
+is a CPAN Module of "helper" functions
+for L<Test::Weaken|/"NAME">.
+L<Test::Weaken::Gtk2>
+is specifically aimed at the needs of users
+of L<Gtk2>,
+but can also be used
+as an example of how
+an expert user extends and adapts
+L<Test::Weaken|/"NAME">.
+Kevin Ryde, the author of 
+L<Test::Weaken::Gtk2>,
+has been a important contributor to 
+L<Test::Weaken|/"NAME">.
 
 =head1 ACKNOWLEDGEMENTS
 
@@ -1853,7 +1881,7 @@ For version 3.000000, Kevin also provided patches.
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright 2007-2009 Jeffrey Kegler, all rights reserved.
+Copyright 2010 Jeffrey Kegler, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify
 it under the same terms as Perl 5.10.
