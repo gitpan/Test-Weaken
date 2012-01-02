@@ -1,5 +1,9 @@
 Revision history for Test-Weaken
 
+3.007_000 Sun Jan  1 17:29:41 PST 2012
+       * New developer's release
+       * Add Kevin Ryde's XSUB doc
+
 3.006000 Mon Nov 15 20:52:06 2010
         * Documentation changes
         * Added Test::Weaken::Gtk2 to SEE ALSO

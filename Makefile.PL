@@ -10,7 +10,6 @@ WriteMakefile(
     AUTHOR              => 'Jeffrey Kegler <nospam@no.spam>',
     VERSION_FROM        => 'lib/Test/Weaken.pm',
     ABSTRACT_FROM       => 'lib/Test/Weaken.pm',
-    NO_META             => 1,
     PL_FILES            => {},
     PREREQ_PM => {
         'Test::More' => 0,

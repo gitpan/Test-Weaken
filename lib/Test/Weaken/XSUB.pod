@@ -1,0 +1,114 @@
+=head1 NAME
+
+Test::Weaken::XSUB - Notes on finding XSUB leaks
+
+=head1 About this document
+
+    The body of this document was written by Kevin Ryde.  It contains
+    an in-depth discussion of how to test XSUB's for leaks using
+    Test::Weaken.  I include it in the expectation that it will be
+    useful.
+    -- Jeffrey Kegler, author of Test::Weaken
+
+=head1 XSUB Mortalizing
+
+When an XSUB returns a newly created scalar it should "mortalize" so
+that scalar is freed once the caller has finished with it (see
+L<perlguts/Reference Counts and Mortality>).  Failing to do so leaks
+memory.
+
+    SV *ret = newSViv(123);
+    sv_2mortal (ret);   /* must mortalize */
+    XPUSHs (ret);
+
+C<Test::Weaken> can check this by taking a reference to the returned
+scalar,
+
+    my $leaks = leaks (sub {
+                         return \( myxsub() );
+                       });
+    if ($leaks) ...
+
+Don't copy to another local scalar and then return that.  Doing so
+will only check the local C<$copy>, not the scalar returned by
+C<myxsub()>.
+
+If you want the value for extra calculations then take a reference for
+the return and look through that for the value.
+
+    leaks (sub {
+             my $ref = \( myxsub() );
+             my $value = $$ref;
+             # ... do something with $value
+             return $ref;
+           });
+
+If an XSUB returns a list of values then take a reference to each as
+follows.  This works because C<map> and C<for> make the loop variable
+(C<$_> or named) an alias to each value successively.
+
+    leaks (sub {
+             return [ map {\$_} myxsub() ];
+           });
+
+    # or with a for loop
+    leaks (sub {
+             my @refs;
+             foreach my $value (myxsub()) {
+               push @refs, \$value;
+             }
+             return \@refs;
+           });
+
+Don't simply store a returned list to an array (either named or
+anonymous).  This copies into new scalars in that array and the
+returned ones from C<myxsub()> then aren't checked.
+
+If you want values from a list for extra calculations then take the
+references first and look at them for the values like the single case
+above.  For example,
+
+    leaks (sub {
+             my @refs = map {\$_} myxsub();
+             my $first_ref = $refs[0]
+             my $value = $$first_ref;
+             # ... do something with $value
+             return \@refs;
+           });
+
+An XSUB could deliberately return the same scalar each time, perhaps a
+pre-calculated constant or a global variable it maintains.  In that
+case the scalar intentionally won't weaken away and C<leaks()>
+checking is not applicable.
+
+The scalar every time occurs in pure Perl too from an anonymous
+constant subr, of the kind created by the C<constant> module (see
+L<constant>).  This is unlikely to arise directly, but could be
+encountered through a scalar ref within an object etc.
+
+    *FOO = sub () { 123 };
+    # FOO() returns same scalar every time
+
+    # likewise from the constant module
+    use constant FOO => 123;
+
+There's no way to tell the intended lifespan of an XSUB return, but
+generally if the code has any sort of C<sv_newmortal> or C<newSV> etc
+for a new scalar every time then it ought to weaken away.
+
+Details of an XSUB return are often hidden in a C<typemap> for brevity
+and consistency (see L<perlxs/The Typemap>).  The supplied types
+(F<Extutils/typemap>) are hard to get wrong, but code with explicit
+C<PUSHs()> etc is worth checking.  Too much mortalizing generally
+causes negative refcounts and probable segfaults, not enough
+mortalizing leaks memory.
+
+=head1 LICENSE AND COPYRIGHT
+
+Copyright 2012 Jeffrey Kegler, all rights reserved.
+
+This program is free software; you can redistribute it and/or modify
+it under the same terms as Perl 5.10.
+
+=cut
+

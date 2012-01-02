@@ -7,7 +7,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.006000';
+our $VERSION   = '3.007_000';
 
 # use Smart::Comments;
 
@@ -674,7 +674,7 @@ L<Test::Weaken|/"NAME"> can deal with circular references without going
 into infinite loops.
 L<Test::Weaken|/"NAME"> will not visit the same Perl data object twice.
 
-=head2 Data Objects, Blessed Objects and Structures
+=head2 Data objects, blessed objects and structures
 
 B<Object> is a heavily overloaded term in the Perl world.
 This document will use the term B<Perl data object>
@@ -706,7 +706,7 @@ Since the question is one of I<expected> lifetime,
 whether an object is part of a data structure
 is, in the last analysis, subjective.
 
-=head2 The Contents of a Data Structure
+=head2 The contents of a data structure
 
 A B<data structure> must have one object
 that is designated as its B<top object>.
@@ -723,7 +723,7 @@ The closure should return
 a reference to the test structure.
 This reference is called the B<test structure reference>.
 
-=head2 Children and Descendants
+=head2 Children and descendants
 
 The elements of an array are B<children> of the array.
 The values of a hash are B<children> of the hash.
@@ -758,7 +758,7 @@ such as inside-out objects,
 are dealt with in
 L<the section on nieces|/"Nieces">.
 
-=head2 Builtin Types
+=head2 Builtin types
 
 This document will refer to the builtin type of objects.
 Perl's B<builtin types> are the types Perl originally gives objects,
@@ -774,7 +774,7 @@ L<ref function|perlfunc/"ref"> returns the builtin type.
 The L<Scalar::Util/reftype function> always returns the builtin type,
 even for blessed objects.
 
-=head2 Persistent Objects
+=head2 Persistent objects
 
 As a practical matter, a descendant that is not
 part of the contents of a
@@ -848,7 +848,7 @@ contents "on the fly," while it is scanning the lab rat.
 This can be done using L<the C<contents> named argument|/contents>,
 which takes a closure as its value.
 
-=head2 Why the Test Structure is Passed via a Closure
+=head2 Why the test structure is passed via a closure
 
 L<Test::Weaken|/"NAME"> gets its test structure reference
 indirectly,
@@ -889,7 +889,7 @@ A test structure constructor
 can return a reference to a test structure
 created from Perl data objects in any scope the user desires.
 
-=head2 Returns and Exceptions
+=head2 Returns and exceptions
 
 The methods of L<Test::Weaken|/"NAME"> do not return errors.
 Errors are always thrown as exceptions.
@@ -1448,7 +1448,7 @@ the count returned by L</"unfreed_count">.
 
 =head1 ADVANCED TECHNIQUES
 
-=head2 Tracing Leaks
+=head2 Tracing leaks
 
 =head3 Avoidance
 
@@ -1467,7 +1467,7 @@ the last successful test.
 Often, examining these changes is enough to
 tell where the leak was introduced.
 
-=head3 Adding Tags
+=head3 Adding tags
 
 The L</"unfreed_proberefs"> method returns an array containing
 probes to
@@ -1479,7 +1479,7 @@ If circumstances allow it,
 you might find it useful to add "tag" elements to arrays and hashes
 to aid in identifying the source of a leak.
 
-=head3 Using Referent Addresses
+=head3 Using referent addresses
 
 You can quasi-uniquely identify data objects using
 the referent addresses of the probe references.
@@ -1499,14 +1499,14 @@ happily, it is
 the referent address that both zero addition
 and L<refaddr|Scalar::Util/refaddr> return.
 
-=head3 Other Techniques
+=head3 Other techniques
 
 Sometimes, when you are interested in why an object is not being freed,
 you want to seek out the reference
 that keeps the object's refcount above 0.
 L<Devel::FindRef> can be useful for this.
 
-=head2 More about Quasi-unique Addresses
+=head2 More about quasi-unique addresses
 
 I call referent addresses "quasi-unique", because they are only
 unique at a
@@ -1536,7 +1536,7 @@ object created at the same address.
 But for most practical programming purposes,
 two indiscernable data objects can be regarded as the same object.
 
-=head2 Debugging Ignore Subroutines
+=head2 Debugging ignore subroutines
 
 =head3 check_ignore
 
@@ -1688,6 +1688,21 @@ The hacked version can reside anywhere,
 and does not need to
 be part of the L<Test::Weaken|/"NAME"> package.
 
+=head2 Leaks from XSUB's
+
+Test::Weaken can be used to find objects
+leaked by XSUB's.
+XSUB's are C language extensions of Perl,
+and there are a number of special considerations
+in handling the objects they create,
+not least the fact that XSUB's can be buggy.
+An in-depth discussion of how to handle them,
+is in
+L<a separate document written by Kevin
+Ryde|Test::Weaken::XSUB>.
+That document assumes
+some understanding of Perl's internals.
+
 =head1 EXPORTS
 
 By default, L<Test::Weaken|/"NAME"> exports nothing.
@@ -1724,7 +1739,7 @@ the value of that probe reference will be C<undef>.
 If a probe reference is still defined at this point,
 it refers to an unfreed Perl data object.
 
-=head2 Tracked Objects
+=head2 Tracked objects
 
 By default,
 objects of builtin types ARRAY, HASH, REF,
@@ -1769,7 +1784,7 @@ Any builtin type may be added to the list of builtin types to be
 tracked with the
 L<tracked_types named argument|/"tracked_types">.
 
-=head2 Examining Objects for Children
+=head2 Examining objects for children
 
 Objects of builtin type
 ARRAY, HASH, REF,
@@ -1881,7 +1896,7 @@ For version 3.000000, Kevin also provided patches.
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright 2010 Jeffrey Kegler, all rights reserved.
+Copyright 2012 Jeffrey Kegler, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify
 it under the same terms as Perl 5.10.
