@@ -7,7 +7,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.007_000';
+our $VERSION   = '3.007_001';
 
 # use Smart::Comments;
 
@@ -129,10 +129,18 @@ sub follow {
                 last FIND_CHILDREN;
             } ## end if ( $object_type eq 'HASH' )
 
-            # GLOB and LVALUE are not tracked by default,
+            # GLOB is not tracked by default,
+            # but we follow ties
+            if ( $object_type eq 'GLOB' ) {
+                if ( my $tied_var = tied *${$follow_probe} ) {
+                    push @child_probes, \($tied_var);
+                }
+                last FIND_CHILDREN;
+            } ## end if ( $object_type eq 'GLOB' )
+
+            # LVALUE is not tracked by default,
             # but we follow ties
             if (   $object_type eq 'SCALAR'
-                or $object_type eq 'GLOB'
                 or $object_type eq 'VSTRING'
                 or $object_type eq 'LVALUE' )
             {
@@ -140,7 +148,7 @@ sub follow {
                     push @child_probes, \($tied_var);
                 }
                 last FIND_CHILDREN;
-            } ## end if ( $object_type eq 'SCALAR' or $object_type eq 'GLOB'...)
+            } ## end if ( $object_type eq 'SCALAR' or $object_type eq ...)
 
             if ( $object_type eq 'REF' ) {
                 if ( my $tied_var = tied ${$follow_probe} ) {
@@ -1803,6 +1811,20 @@ Not examining CODE objects for children
 can be seen as a limitation, because
 closures do hold internal references to data objects.
 Future versions of L<Test::Weaken|/"NAME"> may examine CODE objects.
+
+A variable of builtin type GLOB may be
+a scalar which was assigned a GLOB value
+(a scalar-GLOB) or it may simply be a GLOB (a pure-GLOB).
+The issue that arises from
+L<Test::Weaken|/"NAME">'s standpoint is that,
+in the case of a scalar-GLOB,
+the scalar and the GLOB may be tied separately.
+At present,
+the underlying tied variable of the scalar side of a
+scalar-GLOB is ignored.
+Only the underlying tied variable of the GLOB
+is a child for
+L<Test::Weaken|/"NAME">'s purposes.
 
 The default method of recursing through a test structure
 to find its contents can be customized.
