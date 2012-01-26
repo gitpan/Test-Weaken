@@ -111,7 +111,8 @@ package main;
                 our $FILEHANDLE;
                 my $fh = *FILEHANDLE{'GLOB'};
                 tie ${$fh}, 'MyTiedFileHandle';
-                read $fh, my $read, 1;
+                my $read;
+                read $fh, $read, 1;
                 if ( $read ne 'a' ) {
                     Carp::croak('Problem with tied file handle');
                 }

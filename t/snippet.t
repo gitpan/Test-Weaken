@@ -2,8 +2,15 @@
 
 use strict;
 use warnings;
-use Test::More tests => 9;
+use Test::More;
 use Fatal qw(open close);
+
+BEGIN {
+  unless ($] >= 5.008) {
+    plan skip_all => 'due to test code no good for 5.006 yet';
+  }
+  plan tests => 9;
+}
 
 use lib 't/lib';
 use Test::Weaken::Test;

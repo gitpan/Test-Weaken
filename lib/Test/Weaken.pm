@@ -1,5 +1,6 @@
 package Test::Weaken;
 
+use 5.006;
 use strict;
 use warnings;
 
@@ -7,15 +8,11 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.007_001';
+our $VERSION   = '3.008000';
 
 # use Smart::Comments;
 
 ### <where> Using Smart Comments ...
-
-## no critic (BuiltinFunctions::ProhibitStringyEval)
-$VERSION = eval $VERSION;
-## use critic
 
 =begin Implementation:
 
@@ -542,7 +539,7 @@ sub Test::Weaken::check_ignore {
 
             $error_count++;
 
-            my $message .= q{};
+            my $message = q{};
             $message .= $before_reporting_dump
                 if $include_before;
             $message .= $after_reporting_dump
@@ -568,6 +565,8 @@ sub Test::Weaken::check_ignore {
 
 __END__
 
+=for stopwords abend misdesign misimplement unfreed deallocated deallocation referenceable builtin recursing globals Builtin OO destructor VSTRING LVALUE unevaluated subdirectory refaddr refcount indiscernable XSUB Mortalizing mortalize mortalizing pre-calculated subr refcounts recurses dereferences filehandle Kegler perldoc AnnoCPAN CPAN CPAN's perl Ryde jettero Juerd morgon perrin Perlmonks
+
 =head1 NAME
 
 Test::Weaken - Test that freed memory objects were, indeed, freed
@@ -586,49 +585,38 @@ is_file($_, 't/synopsis.t', 'synopsis')
     use Data::Dumper;
     use Math::BigInt;
     use Math::BigFloat;
-    use Carp;
-    use English qw( -no_match_vars );
 
     my $good_test = sub {
         my $obj1 = Math::BigInt->new('42');
         my $obj2 = Math::BigFloat->new('7.11');
-        [ $obj1, $obj2 ];
+        return [ $obj1, $obj2 ];
     };
-
     if ( !leaks($good_test) ) {
-        print "No leaks in test 1\n"
-            or Carp::croak("Cannot print to STDOUT: $ERRNO");
-    }
-    else {
-        print "There were memory leaks from test 1!\n"
-            or Carp::croak("Cannot print to STDOUT: $ERRNO");
+        print "No leaks in test 1\n";
+    } else {
+        print "There were memory leaks from test 1!\n";
     }
 
     my $bad_test = sub {
-        my $array = [ 42, 711 ];
-        push @{$array}, $array;
-        $array;
+        my $arrayref = [ 42, 711 ];
+        push @{$arrayref}, $arrayref;  # circular reference
+        return $arrayref;
     };
-
     my $bad_destructor = sub {'I am useless'};
-
     my $tester = Test::Weaken::leaks(
         {   constructor => $bad_test,
             destructor  => $bad_destructor,
         }
     );
     if ($tester) {
-        my $unfreed_proberefs = $tester->unfreed_proberefs();
-        my $unfreed_count     = @{$unfreed_proberefs};
         printf "Test 2: %d of %d original references were not freed\n",
-            $tester->unfreed_count(), $tester->probe_count()
-            or Carp::croak("Cannot print to STDOUT: $ERRNO");
-        print "These are the probe references to the unfreed objects:\n"
-            or Carp::croak("Cannot print to STDOUT: $ERRNO");
+            $tester->unfreed_count(), $tester->probe_count();
+
+        my $unfreed_proberefs = $tester->unfreed_proberefs();
+        print "These are the probe references to the unfreed objects:\n";
         for my $ix ( 0 .. $#{$unfreed_proberefs} ) {
             print Data::Dumper->Dump( [ $unfreed_proberefs->[$ix] ],
-                ["unfreed_$ix"] )
-                or Carp::croak("Cannot print to STDOUT: $ERRNO");
+                ["unfreed_$ix"] );
         }
     }
 
@@ -1696,20 +1684,96 @@ The hacked version can reside anywhere,
 and does not need to
 be part of the L<Test::Weaken|/"NAME"> package.
 
-=head2 Leaks from XSUB's
+=head1 XSUB Mortalizing
 
-Test::Weaken can be used to find objects
-leaked by XSUB's.
-XSUB's are C language extensions of Perl,
-and there are a number of special considerations
-in handling the objects they create,
-not least the fact that XSUB's can be buggy.
-An in-depth discussion of how to handle them,
-is in
-L<a separate document written by Kevin
-Ryde|Test::Weaken::XSUB>.
-That document assumes
-some understanding of Perl's internals.
+When a C language XSUB returns a newly created scalar it should "mortalize"
+so the scalar is freed once the caller has finished with it (see
+L<perlguts/Reference Counts and Mortality>).  Failing to do so leaks memory.
+
+    SV *ret = newSViv(123);
+    sv_2mortal (ret);   /* must mortalize */
+    XPUSHs (ret);
+
+C<Test::Weaken> can check this by taking a reference to the returned
+scalar,
+
+    my $leaks = leaks (sub {
+                         return \( somexsub() );
+                       });
+    if ($leaks) ...
+
+Don't store to a local scalar and then return that.  Doing so will only
+check the local scalar, not the one returned by C<somexsub()>.
+
+If you want the value for further calculations then take a reference to the
+return then look through that for the value.
+
+    leaks (sub {
+             my $ref = \( somexsub() );
+             my $value = $$ref;
+             # ... do something with $value
+             return $ref;
+           });
+
+If an XSUB returns a list of values then take a reference to each as
+follows.  This works because C<map> and C<for> make the loop variable
+(either C<$_> or named) an alias to each value successively.
+
+    leaks (sub {
+             return [ map {\$_} somexsub() ];
+           });
+
+    # or with a for loop
+    leaks (sub {
+             my @refs;
+             foreach my $value (somexsub()) {
+               push @refs, \$value;
+             }
+             return \@refs;
+           });
+
+Don't store a returned list to an array (either named or anonymous) as this
+copies into new scalars in that array and the returned ones from
+C<somexsub()> then aren't checked.
+
+If you want the values from a list for extra calculations then take the
+references first and look through them for the values like the single case
+above.  For example,
+
+    leaks (sub {
+             my @refs = map {\$_} somexsub();
+             my $first_ref = $refs[0]
+             my $value = $$first_ref;
+             # ... do something with $value
+             return \@refs;
+           });
+
+An XSUB might deliberately return the same scalar each time, perhaps a
+pre-calculated constant or a global variable it maintains.  In that case the
+scalar intentionally won't weaken away and this C<leaks()> checking is not
+applicable.
+
+Returning the same scalar every time occurs in pure Perl too from an
+anonymous constant subr, such as created by the C<constant> module (see
+L<constant>).  This is unlikely to arise directly, but could be encountered
+through a scalar ref within an object etc.
+
+    # FOO() returns same scalar every time
+    *FOO = sub () { 123 };
+
+    # likewise from the constant module
+    use constant BAR => 456;
+
+There's no way to tell the intended lifespan of an XSUB return, but
+generally if the code has any sort of C<newSV()> or C<sv_newmortal()> etc
+making a new scalar every time then it ought to weaken away.
+
+The details of an XSUB return are often hidden in a F<typemap> file for
+brevity and consistency (see L<perlxs/The Typemap>).  The supplied types
+(F<Extutils/typemap>) are hard to get wrong, but code with explicit
+C<PUSHs()> etc is worth checking.  Generally too much mortalizing causes
+negative refcounts and probable segfaults, and not enough mortalizing leaks
+memory.
 
 =head1 EXPORTS
 
@@ -1927,9 +1991,10 @@ it under the same terms as Perl 5.10.
 
 1;    # End of Test::Weaken
 
+#   fill-column: 100
+#
 # Local Variables:
 #   mode: cperl
 #   cperl-indent-level: 4
-#   fill-column: 100
 # End:
 # vim: expandtab shiftwidth=4:

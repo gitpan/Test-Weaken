@@ -6,10 +6,17 @@
 use strict;
 use warnings;
 
-use Test::More tests => 24;
+use Test::More;
 use Data::Dumper;
 use English qw( -no_match_vars );
 use Fatal qw(open close);
+
+BEGIN {
+  unless ($] >= 5.008) {
+    plan skip_all => 'due to test code no good for 5.006 yet';
+  }
+  plan  tests => 24;
+}
 
 use lib 't/lib';
 use Test::Weaken::Test;

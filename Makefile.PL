@@ -1,5 +1,7 @@
-# No Scalar::Util weaken before 5.008
-require 5.008;
+#!/usr/bin/perl -w
+
+# No Scalar::Util weaken before 5.006
+require 5.006;
 
 use strict;
 use warnings;
@@ -11,10 +13,14 @@ WriteMakefile(
     VERSION_FROM        => 'lib/Test/Weaken.pm',
     ABSTRACT_FROM       => 'lib/Test/Weaken.pm',
     PL_FILES            => {},
+    LICENSE             => 'perl',
+    MIN_PERL_VERSION    => '5.006',
+              
     PREREQ_PM => {
         'Test::More' => 0,
         'Scalar::Util' => '1.18',
     },
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
-    clean               => { FILES => 'Test-Weaken-*' },
+    # clean               => { FILES => 'Test-Weaken-*' },
+    SIGN                => 1,
 );

@@ -18,7 +18,6 @@ etc/check_links.pl
 etc/last_minute_check.sh
 etc/not_in_manifest.pl
 lib/Test/Weaken.pm
-lib/Test/Weaken/XSUB.pod
 sandbox/elements.pl
 sandbox/reftypes.pl
 sandbox/tied.pl
@@ -41,3 +40,4 @@ t/tied.t
 t/unfilled-array.t
 t/weaken.t
 META.json                                Module JSON meta-data (added by MakeMaker)
+SIGNATURE                                Public-key signature (added by MakeMaker)
