@@ -14,3 +14,14 @@
 ^junk$
 ^pm_to_blib$
 ^save/
+
+# emacs backups
+~$
+
+# ExtUtils::MakeMaker leaving Makefile.old
+^Makefile\.old$
+
+# Kevin's dist stuff
+^dist-deb
+^up$
+^MANIFEST\.old$

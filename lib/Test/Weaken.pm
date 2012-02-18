@@ -8,7 +8,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.008000';
+our $VERSION   = '3.010000';
 
 # use Smart::Comments;
 
@@ -44,7 +44,7 @@ use Scalar::Util 1.18 qw();
 my @default_tracked_types = qw(REF SCALAR VSTRING HASH ARRAY CODE);
 
 sub follow {
-    my ( $self, $base_probe ) = @_;
+    my ( $self, @base_probe_list ) = @_;
 
     my $ignore             = $self->{ignore};
     my $contents           = $self->{contents};
@@ -64,11 +64,11 @@ sub follow {
     # Initialize the results with a reference to the dereferenced
     # base reference.
 
-    # The initialization assumes the $base_probe is a reference,
+    # The initialization assumes each $base_probe is a reference,
     # not part of the test object, whose referent is also a reference
     # which IS part of the test object.
-    my @follow_probes    = ($base_probe);
-    my @tracking_probes  = ($base_probe);
+    my @follow_probes    = @base_probe_list;
+    my @tracking_probes  = @base_probe_list;
     my %already_followed = ();
     my %already_tracked  = ();
 
@@ -317,13 +317,15 @@ sub Test::Weaken::test {
     my $contents    = $self->{contents};
     my $test        = $self->{test};
 
-    my $test_object_probe = \( $constructor->() );
-    if ( not ref ${$test_object_probe} ) {
-        Carp::carp(
-            'Test::Weaken test object constructor did not return a reference'
-        );
+    my @test_object_probe_list = map {\$_} $constructor->();
+    foreach my $test_object_probe (@test_object_probe_list) {
+        if ( not ref ${$test_object_probe} ) {
+            Carp::carp(
+              'Test::Weaken test object constructor returned a non-reference'
+            );
+        }
     }
-    my $probes = Test::Weaken::Internal::follow( $self, $test_object_probe );
+    my $probes = Test::Weaken::Internal::follow( $self, @test_object_probe_list );
 
     $self->{probe_count} = @{$probes};
     $self->{weak_probe_count} =
@@ -341,9 +343,9 @@ sub Test::Weaken::test {
     }
 
     # Now free everything.
-    $destructor->( ${$test_object_probe} ) if defined $destructor;
+    $destructor->( map {$$_} @test_object_probe_list ) if defined $destructor;
 
-    $test_object_probe = undef;
+    @test_object_probe_list = ();
 
     my $unfreed_probes = [ grep { defined $_ } @{$probes} ];
     $self->{unfreed_probes} = $unfreed_probes;
@@ -940,7 +942,7 @@ are passed directly as code references.
 
 =over 4
 
-=item constructor
+=item C<constructor =E<gt> $coderef>
 
 The B<constructor> argument is required.
 Its value must be a code reference to
@@ -950,32 +952,61 @@ should return a reference to the test structure.
 It is best to follow strictly the closure-local strategy,
 as described above.
 
+    leaks ({ constructor => sub {
+                              return Some::Object->new(123);
+                            },
+          });
+
 When L</"leaks"> is called using the "short form",
 the code reference to the test structure constructor
 must be the first argument to L</"leaks">.
 
-=item destructor
+    leaks (sub {
+             return Some::Object->new(123);
+          });
+
+The constructor can also return a list of objects all of which are to be
+checked.
+
+    leaks (sub {
+             return (Foo->new(), Bar->new());
+          });
+
+Usually this is when two objects are somehow inter-related so they both
+should destroy together, or perhaps sub-parts of an object not reached by
+the contents tracing (though see C<contents> below for a more general way to
+reach such sub-parts.)
+
+=item C<destructor =E<gt> $coderef>
 
 The B<destructor> argument is optional.
 If specified, its value must be a code reference
 to the B<test structure destructor>.
 
-Some test structures require
-a destructor to be called when
-they are freed.
-The primary purpose for
-the test structure destructor is to enable
-L<Test::Weaken|/"NAME"> to work with these data structures.
-The test structure destructor is called
-just before L<Test::Weaken|/"NAME"> tries
-to free the test structure
-by setting the test structure reference to C<undef>.
-The test structure destructor will be passed one argument,
-the test structure reference.
+Some test structures require a destructor to be called when they are freed.
+This destuctor function is called called just before C<Test::Weaken> tries
+to free the test structure (by setting to C<undef>).  It's called with the
+object as returned by the C<constructor>,
+
+    leaks ({ constructor => sub { Foo->new },
+             destructor  => sub {
+                              my ($foo) = @_;
+                              $foo->destroy;
+                            },
+          });
+
+If the C<constructor> returns multiple values then they're all passed to the
+C<destructor>.
 The return value of the test structure destructor is ignored.
 
 When L</"leaks"> is called using the "short form",
 a code reference to the test structure destructor is the optional, second argument to L</"leaks">.
+
+    leaks (sub { Foo->new },
+           sub {
+             my ($foo) = @_;
+             $foo->destroy;
+           });
 
 =item ignore
 
