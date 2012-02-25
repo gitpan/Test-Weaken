@@ -179,8 +179,14 @@ if ( not $eval_return ) {
     $eval_result = $EVAL_ERROR;
 }
 
+# \.? allows either "at line 170." or "at line 170"
+# Normally Carp.pm makes a string ending "170\n" which die() leaves alone.
+# But have seen "170.\n" which is from die() when it gets a string without
+# a newline already.  Dunno why the croak()s in Weaken.pm would reach there.
+# Old Carp.pm might have done it if not finding a caller to report, maybe.
+#
 $eval_result =~ s{
-    [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+    [ ] at [ ] (\S+) [ ] line [ ] \d+ \.? $
 }{ at <FILE> line <LINE_NUMBER>}gxms;
 
 Test::Weaken::Test::is(
@@ -288,7 +294,7 @@ sub counted_errors {
     $stderr .= $EVAL_ERROR if not $eval_return;
 
     $stderr =~ s{
-        [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+        [ ] at [ ] (\S+) [ ] line [ ] \d+ \.? $
     }{ at <FILE> line <LINE_NUMBER>}gxms;
 
     Test::Weaken::Test::is(
@@ -387,7 +393,7 @@ EOS
 $stderr =~ s/0x[0-9a-fA-F]*/0xXXXXXXX/gxms;
 $stderr .= $EVAL_ERROR if not $eval_return;
 $stderr =~ s{
-    [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+    [ ] at [ ] (\S+) [ ] line [ ] \d+ \.? $
 }{ at <FILE> line <LINE_NUMBER>}gxms;
 
 Test::Weaken::Test::is(
@@ -492,7 +498,7 @@ sub counted_compare_depth {
     $stderr .= $EVAL_ERROR if not $eval_return;
 
     $stderr =~ s{
-        [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+        [ ] at [ ] (\S+) [ ] line [ ] \d+ \.? $
     }{ at <FILE> line <LINE_NUMBER>}gxms;
 
     Test::Weaken::Test::is(
@@ -605,7 +611,7 @@ sub counted_reporting_depth {
     $stderr .= $EVAL_ERROR if not $eval_return;
 
     $stderr =~ s{
-        [ ] at [ ] (\S+) [ ] line [ ] \d+ $
+        [ ] at [ ] (\S+) [ ] line [ ] \d+ \.? $
     }{ at <FILE> line <LINE_NUMBER>}gxms;
 
     Test::Weaken::Test::is(

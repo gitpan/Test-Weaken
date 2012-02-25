@@ -15,7 +15,7 @@ WriteMakefile(
     PL_FILES            => {},
     LICENSE             => 'perl',
     MIN_PERL_VERSION    => '5.006',
-              
+
     PREREQ_PM => {
         'Test::More' => 0,
         'Scalar::Util' => '1.18',
