@@ -11,6 +11,11 @@ use Data::Dumper;
 use English qw( -no_match_vars );
 use Fatal qw(open close);
 
+# force sorted in got/want checks
+# (though checking the string display is probably a bit fragile)
+$Data::Dumper::Sortkeys = 1;
+
+
 BEGIN {
   unless ($] >= 5.008) {
     plan skip_all => 'due to test code no good for 5.006 yet';

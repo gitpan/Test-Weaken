@@ -1,5 +1,8 @@
 Revision history for Test-Weaken
 
+3.014000 February 2012
+       * tests force Dumper sortkeys
+
 3.012000 February 2012
        * tests allow for "at line 123." with a "."
 
