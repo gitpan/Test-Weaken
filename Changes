@@ -1,5 +1,11 @@
 Revision history for Test-Weaken
 
+3.018000 May 2012
+       * new options ignore_preds, ignore_object, ignore_objects
+
+3.016000 May 2012
+       * new ignore_class and ignore_classes options
+
 3.014000 February 2012
        * tests force Dumper sortkeys
 

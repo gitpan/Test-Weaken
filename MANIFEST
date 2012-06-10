@@ -16,10 +16,11 @@ lib/Test/Weaken.pm
 Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
-META.json
 META.yml
 README
+sandbox/dot.pl
 sandbox/elements.pl
+sandbox/ignore.pl
 sandbox/reftypes.pl
 sandbox/tied.pl
 SIGNATURE
@@ -33,12 +34,13 @@ t/filehandle.t
 t/ignore.t
 t/lib/Test/Weaken/Test.pm
 t/Makefile
-t/multiple_return.t
 t/overload.t
+t/pod.t
 t/poof.t
 t/snippet.t
 t/stein.t
 t/synopsis.t
 t/tied.t
 t/unfilled-array.t
+t/various.t
 t/weaken.t

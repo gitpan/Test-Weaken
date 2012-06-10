@@ -1,5 +1,20 @@
 package Test::Weaken;
 
+
+# maybe:
+# destructor_method => 'destroy'
+# contents_funcs => arrayref of funcs
+#     multiple contents, or sub{} returning list enough ?
+# track_filehandles => 1  GLOB and IO
+#
+# locations=>1
+#  top->{'foo'}->[10]->REF->*{IO}
+#  top.H{'foo'}.A[10].REF.*{IO}
+# unfreed_locations() arrayref of strings
+# first location encountered
+# locations_maxdepth
+
+
 use 5.006;
 use strict;
 use warnings;
@@ -8,7 +23,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.014000';
+our $VERSION   = '3.018000';
 
 # use Smart::Comments;
 
@@ -46,7 +61,7 @@ my @default_tracked_types = qw(REF SCALAR VSTRING HASH ARRAY CODE);
 sub follow {
     my ( $self, @base_probe_list ) = @_;
 
-    my $ignore             = $self->{ignore};
+    my $ignore_preds       = $self->{ignore_preds};
     my $contents           = $self->{contents};
     my $trace_maxdepth     = $self->{trace_maxdepth};
     my $trace_following    = $self->{trace_following};
@@ -86,6 +101,7 @@ sub follow {
         my @child_probes = ();
 
         if ($trace_following) {
+            require Data::Dumper;
             ## no critic (ValuesAndExpressions::ProhibitLongChainsOfMethodCalls)
             print {*STDERR} 'Following: ',
                 Data::Dumper->new( [$follow_probe], [qw(tracking)] )->Terse(1)
@@ -101,7 +117,7 @@ sub follow {
 
         FIND_CHILDREN: {
 
-            if ( defined $ignore ) {
+            foreach my $ignore (@$ignore_preds) {
                 my $safe_copy = $follow_probe;
                 last FIND_CHILDREN if $ignore->($safe_copy);
             }
@@ -171,7 +187,7 @@ sub follow {
                 if $already_tracked{ Scalar::Util::refaddr $new_tracking_probe
                     }++;
 
-            if ( defined $ignore ) {
+            foreach my $ignore (@$ignore_preds) {
                 my $safe_copy = $new_tracking_probe;
                 next CHILD_PROBE if $ignore->($safe_copy);
             }
@@ -183,6 +199,10 @@ sub follow {
                     ->Terse(1)->Maxdepth($trace_maxdepth)->Dump
                     or Carp::croak("Cannot print to STDOUT: $ERRNO");
                 ## use critic
+
+                 # print {*STDERR} 'Tracking: ',
+                 #   "$new_tracking_probe\n";
+
             } ## end if ($trace_tracking)
             push @tracking_probes, $new_tracking_probe;
 
@@ -197,13 +217,16 @@ sub follow {
 # See POD, below
 sub Test::Weaken::new {
     my ( $class, $arg1, $arg2 ) = @_;
-    my $constructor;
-    my $destructor;
     my $self = {};
     bless $self, $class;
     $self->{test} = 1;
 
-    UNPACK_ARGS: {
+    my @ignore_preds;
+    my @ignore_classes;
+    my @ignore_objects;
+    $self->{ignore_preds} = \@ignore_preds;
+
+  UNPACK_ARGS: {
         if ( ref $arg1 eq 'CODE' ) {
             $self->{constructor} = $arg1;
             if ( defined $arg2 ) {
@@ -216,19 +239,32 @@ sub Test::Weaken::new {
             Carp::croak('arg to Test::Weaken::new is not HASH ref');
         }
 
-        if ( defined $arg1->{constructor} ) {
-            $self->{constructor} = $arg1->{constructor};
-            delete $arg1->{constructor};
+        if (defined (my $constructor = delete $arg1->{constructor})) {
+            $self->{constructor} = $constructor;
         }
 
-        if ( defined $arg1->{destructor} ) {
-            $self->{destructor} = $arg1->{destructor};
-            delete $arg1->{destructor};
+        if (defined (my $destructor = delete $arg1->{destructor})) {
+            $self->{destructor} = $destructor;
         }
 
-        if ( defined $arg1->{ignore} ) {
-            $self->{ignore} = $arg1->{ignore};
-            delete $arg1->{ignore};
+        if (defined (my $coderef = delete $arg1->{ignore})) {
+            if (ref $coderef ne 'CODE') {
+                Carp::croak('Test::Weaken: ignore must be CODE ref');
+            }
+            push @ignore_preds, $coderef;
+        }
+        if (defined (my $ignore_preds = delete $arg1->{ignore_preds})) {
+            push @ignore_preds, @$ignore_preds;
+        }
+        if ( defined (my $ignore_class = delete $arg1->{ignore_class} )) {
+            push @ignore_classes, $ignore_class;
+        }
+        if ( defined (my $ignore_classes = delete $arg1->{ignore_classes} )) {
+            push @ignore_classes, @$ignore_classes;
+        }
+        push @ignore_objects, delete $arg1->{ignore_object};
+        if ( defined (my $ignore_objects = delete $arg1->{ignore_objects} )) {
+            push @ignore_objects, @$ignore_objects;
         }
 
         if ( defined $arg1->{trace_maxdepth} ) {
@@ -269,7 +305,7 @@ sub Test::Weaken::new {
                 $message .= "Unknown named arg: '$unknown_named_arg'\n";
             }
             Carp::croak( $message
-                    . 'Test::Weaken failed due to unknown named arg(s)' );
+                         . 'Test::Weaken failed due to unknown named arg(s)' );
         }
 
     }    # UNPACK_ARGS
@@ -284,11 +320,6 @@ sub Test::Weaken::new {
             unless ref $self->{destructor} eq 'CODE';
     }
 
-    if ( my $ref_type = ref $self->{ignore} ) {
-        Carp::croak('Test::Weaken: ignore must be CODE ref')
-            unless ref $self->{ignore} eq 'CODE';
-    }
-
     if ( my $ref_type = ref $self->{contents} ) {
         Carp::croak('Test::Weaken: contents must be CODE ref')
             unless ref $self->{contents} eq 'CODE';
@@ -297,6 +328,35 @@ sub Test::Weaken::new {
     if ( my $ref_type = ref $self->{tracked_types} ) {
         Carp::croak('Test::Weaken: tracked_types must be ARRAY ref')
             unless ref $self->{tracked_types} eq 'ARRAY';
+    }
+
+    if (@ignore_classes) {
+        push @ignore_preds, sub {
+            my ($ref) = @_;
+            if (Scalar::Util::blessed($ref)) {
+                foreach my $class (@ignore_classes) {
+                    if ($ref->isa($class)) {
+                        return 1;
+                    }
+                }
+            }
+            return 0;
+        };
+    }
+
+    # undefs in ignore objects are skipped
+    @ignore_objects = grep {defined} @ignore_objects;
+    if (@ignore_objects) {
+        push @ignore_preds, sub {
+            my ($ref) = @_;
+            $ref = Scalar::Util::refaddr($ref);
+            foreach my $object (@ignore_objects) {
+                if (Scalar::Util::refaddr($object) == $ref) {
+                    return 1;
+                }
+            }
+            return 0;
+        };
     }
 
     return $self;
@@ -313,7 +373,7 @@ sub Test::Weaken::test {
 
     my $constructor = $self->{constructor};
     my $destructor  = $self->{destructor};
-    my $ignore      = $self->{ignore};
+    # my $ignore      = $self->{ignore};
     my $contents    = $self->{contents};
     my $test        = $self->{test};
 
@@ -379,7 +439,6 @@ sub poof_array_return {
 
 } ## end sub poof_array_return;
 
-# Undocumented and deprecated
 sub Test::Weaken::poof {
     my @args   = @_;
     my $tester = Test::Weaken->new(@args);
@@ -567,7 +626,7 @@ sub Test::Weaken::check_ignore {
 
 __END__
 
-=for stopwords abend misdesign misimplement unfreed deallocated deallocation referenceable builtin recursing globals Builtin OO destructor VSTRING LVALUE unevaluated subdirectory refaddr refcount indiscernable XSUB Mortalizing mortalize mortalizing pre-calculated subr refcounts recurses dereferences filehandle Kegler perldoc AnnoCPAN CPAN CPAN's perl Ryde jettero Juerd morgon perrin Perlmonks
+=for stopwords abend misdesign misimplement unfreed deallocated deallocation referenceable builtin recursing globals Builtin OO destructor VSTRING LVALUE unevaluated subdirectory refaddr refcount indiscernable XSUB XSUBs mortalizing mortalize pre-calculated subr refcounts recurses dereferences filehandle filehandles Kegler perldoc AnnoCPAN CPAN CPAN's perl Ryde jettero Juerd morgon perrin Perlmonks ie GLOBs hashref coderef isa unblessed numize OOPery arrayref autovivified dup typemap arrayrefs Gtk2-Perl
 
 =head1 NAME
 
@@ -583,44 +642,55 @@ is_file($_, 't/synopsis.t', 'synopsis')
 
 =end Marpa::Test::Display:
 
-    use Test::Weaken qw(leaks);
-    use Data::Dumper;
-    use Math::BigInt;
-    use Math::BigFloat;
+ use Test::Weaken qw(leaks);
 
-    my $good_test = sub {
-        my $obj1 = Math::BigInt->new('42');
-        my $obj2 = Math::BigFloat->new('7.11');
-        return [ $obj1, $obj2 ];
-    };
-    if ( !leaks($good_test) ) {
-        print "No leaks in test 1\n";
-    } else {
-        print "There were memory leaks from test 1!\n";
-    }
+ # basic leaks detection
+ my $leaks = leaks(sub {
+                    my $obj = { one => 1,
+                                two => [],
+                                three => [3,3,3] };
+                    return $obj;
+                   });
+ if ($leaks) {
+     print "There were memory leaks from test 1!\n";
+     printf "%d of %d original references were not freed\n",
+         $leaks->unfreed_count(), $leaks->probe_count();
+ } else {
+     print "No leaks in test 1\n";
+ }
 
-    my $bad_test = sub {
-        my $arrayref = [ 42, 711 ];
-        push @{$arrayref}, $arrayref;  # circular reference
-        return $arrayref;
-    };
-    my $bad_destructor = sub {'I am useless'};
-    my $tester = Test::Weaken::leaks(
-        {   constructor => $bad_test,
-            destructor  => $bad_destructor,
+ # or with various options
+ $leaks = Test::Weaken::leaks(
+    { constructor => sub {
+        my @array = (42, 711);
+        push @array, \@array;  # circular reference
+        return \@array;
+      },
+      destructor  => sub {
+        print "This could invoke an object destructor\n";
+      },
+      ignore  => sub {
+        my ($ref) = @_;
+        if (some_condition($ref)) {
+          return 1;  # ignore
         }
-    );
-    if ($tester) {
-        printf "Test 2: %d of %d original references were not freed\n",
-            $tester->unfreed_count(), $tester->probe_count();
-
-        my $unfreed_proberefs = $tester->unfreed_proberefs();
-        print "These are the probe references to the unfreed objects:\n";
-        for my $ix ( 0 .. $#{$unfreed_proberefs} ) {
-            print Data::Dumper->Dump( [ $unfreed_proberefs->[$ix] ],
-                ["unfreed_$ix"] );
-        }
-    }
+        return 0; # don't ignore
+      },
+      contents  => sub {
+        my ($ref) = @_;
+        return extract_more_from($ref);
+      },
+    });
+ if ($leaks) {
+     print "There were memory leaks from test 2!\n";
+     my $unfreed_proberefs = $leaks->unfreed_proberefs();
+     print "These are the probe references to the unfreed objects:\n";
+     require Data::Dumper;
+     foreach my $ref (@$unfreed_proberefs) {
+         print "ref $ref\n";
+         print Data::Dumper->Dump([$ref], ['unfreed']);
+     }
+ }
 
 =begin Marpa::Test::Display:
 
@@ -630,267 +700,93 @@ is_file($_, 't/synopsis.t', 'synopsis')
 
 =head1 DESCRIPTION
 
-A memory leak occurs when a Perl data structure is destroyed
-but some of the contents of that structure
-are not freed.
-Leaked memory is a useless overhead.
-Leaks can significantly impact system performance.
-They can also cause an application to abend due to lack of memory.
+C<Test::Weaken> helps detect unfreed Perl data in arrays, hashes, scalars,
+objects, etc, by descending recursively through structures and watching that
+everything is freed.  Unfreed data is a useless overhead and may cause an
+application to abend due to lack of memory.
 
-In Perl,
-circular references
-are
-a common cause of memory leaks.
-Circular references are allowed in Perl,
-but data structures containing circular references will leak memory
-unless the programmer takes specific measures to prevent leaks.
-Preventive measures include
-weakening the references
-and arranging to break the reference cycle just before
-the structure is destroyed.
+Normally if the last reference to something is discarded then it and
+anything in it is freed automatically.  But this might not occur due to
+circular references, unexpected global variables or closures, or reference
+counting mistakes in XSUBs.
 
-When using circular references,
-it is easy to misdesign or misimplement a scheme for
-preventing memory leaks.
-Mistakes of this kind
-have been hard to detect
-in a test suite.
+C<Test::Weaken> is named for the strategy used to detect leaks.  References
+are taken to the test objects and all their contents, then those references
+are weakened and expected to be then freed.
 
-L<Test::Weaken|/"NAME"> allows easy detection of unfreed Perl data.
-L<Test::Weaken|/"NAME"> allows you to examine the unfreed data,
-even data that would usually have been made inaccessible.
+There's options to ignore intentional globals, or include extra associated
+data held elsewhere, or invoke an explicit destructor.  Unfreed parts are
+reported and can be passed to other modules such as L<Devel::FindRef> to try
+to discover why they weren't freed.
 
-L<Test::Weaken|/"NAME"> frees the test structure, then looks to see if any of the
-contents of the structure were not actually deallocated.  By default,
-L<Test::Weaken|/"NAME"> determines the contents of a data structure
-by examining arrays and hashes, by following references, and by following
-tied variables to their underlying object.
-L<Test::Weaken|/"NAME"> does this recursively to
-unlimited depth.
+C<Test::Weaken> examines structures to an unlimited depth and is safe on
+circular structures.
 
-L<Test::Weaken|/"NAME"> can deal with circular references without going
-into infinite loops.
-L<Test::Weaken|/"NAME"> will not visit the same Perl data object twice.
+=head2 Tracking and Children
 
-=head2 Data Objects, Blessed Objects and Structures
+C<Test::Weaken> determines the contents of a data structure by the contents
+of the top object of the test data structure, and recursively into the
+contents of those sub-parts.  The following data types are tracked and their
+contents examined,
 
-B<Object> is a heavily overloaded term in the Perl world.
-This document will use the term B<Perl data object>
-or B<data object> to refer to any referenceable Perl datum,
-including
-scalars, arrays, hashes, references themselves, and code objects.
-The full list of types of referenceable Perl data objects
-is given in
-L<the description of the ref builtin in the Perl documentation|perlfunc/"ref">.
-An B<object> that has been blessed using the Perl
-L<bless builtin|perlfunc/"bless">, will be called a B<blessed object>.
+    ARRAY       each of its values
+    HASH        each of its values
+    SCALAR      if a reference then the target object
+    CODE        no contents as yet
+    tie ANY     the associated tie object from tied()
 
-In this document,
-a Perl B<data structure> (often just called a B<structure>)
-is any group of Perl objects that are
-co-mortal.
-B<Co-mortal> means that the maintainer
-expects those objects to be destroyed at the same time.
-For example, if a group of Perl objects is referenced,
-directly or indirectly,
-through a hash,
-and is referenced only through that hash,
-a programmer will usually expect all of those objects
-to be destroyed when the hash is.
+In an array or hash each scalar value has an independent existence and
+C<Test::Weaken> tracks each individually.  See L</Array and Hash Keys and
+Values> below.
 
-Perl data structures can be any set of
-Perl data objects.
-Since the question is one of I<expected> lifetime,
-whether an object is part of a data structure
-is, in the last analysis, subjective.
+C<CODE> objects, ie. subroutines, are not examined for children.  This is a
+limitation, because closures do hold internal references to data objects.
+Future versions of C<Test::Weaken> might descend into CODE objects.
 
-=head2 The Contents of a Data Structure
+The following types are not tracked by default and not examined for
+contents,
 
-A B<data structure> must have one object
-that is designated as its B<top object>.
-In most data structures, it is obvious which
-data object should be designated as the top object.
-The objects
-in the data structure, including the top object,
-are the B<contents> of that data structure.
+    GLOB
+    IO         underlying a file handle
+    FORMAT     always global
+    LVALUE
 
-L<Test::Weaken|/"NAME"> gets its B<test data structure>,
-or B<test structure>,
-from a closure.
-The closure should return
-a reference to the test structure.
-This reference is called the B<test structure reference>.
+GLOBs are usually either an entry in the Perl symbol table or a filehandle.
+An IO is the file object underlying a filehandle.  Perl symbol tables are
+usually permanent and shouldn't be tracked, but see L</File Handles> below
+for tracking open files.
 
-=head2 Children and Descendants
+Builtin types added to Perl in the future and not known to C<Test::Weaken>
+will not be tracked by default but could be requested with C<tracked_types>
+below.
 
-The elements of an array are B<children> of the array.
-The values of a hash are B<children> of the hash.
-A referent is a B<child> of its reference.
-The underlying object of a tied variable is a B<child> of the
-tied variable.
-
-The B<descendants> of a Perl data object are itself,
-its children, and any children of one of its descendants.
-By default, L<Test::Weaken|/"NAME"> determines the contents of a data structure
-by recursing through the
-descendants
-of the top object of the test data structure.
-
-If one data object is the descendant of a second object,
-then the second data object is an B<ancestor> of the first object.
-A data object is considered to be a descendant of itself,
-and also to be one of its own ancestors.
-
-L<Test::Weaken|/"NAME">'s default assumption is
-that the contents of a data structure are the same as
-its descendants.
-This works for many cases,
-but not for all.
-Ways to deal with
-descendants that are not contents,
-such as globals,
-are dealt with in L<the section on persistent objects|/"Persistent Objects">.
-Ways to deal with
-contents that are not descendants,
-such as inside-out objects,
-are dealt with in
-L<the section on nieces|/"Nieces">.
-
-=head2 Builtin Types
-
-This document will refer to the builtin type of objects.
-Perl's B<builtin types> are the types Perl originally gives objects,
-as opposed to B<blessed types>, the types assigned objects by
-the L<bless function|perlfunc/"bless">.
-The builtin types are listed in
-L<the description of the ref builtin in the Perl documentation|perlfunc/"ref">.
-
-Perl's L<ref function|perlfunc/"ref"> returns the blessed type of its
-argument, if the argument has been blessed into a package.
-Otherwise the 
-L<ref function|perlfunc/"ref"> returns the builtin type.
-The L<Scalar::Util/reftype function> always returns the builtin type,
-even for blessed objects.
-
-=head2 Persistent Objects
-
-As a practical matter, a descendant that is not
-part of the contents of a
-test structure is only a problem
-if its lifetime extends beyond that of the test
-structure.
-A descendant that is expected to stay around after
-the test structure is destroyed
-is called a B<persistent object>.
-
-A persistent object is not a memory leak.
-That's the problem.
-L<Test::Weaken|/"NAME"> is trying to find memory leaks
-and it looks for data objects that remain
-after the test structure is freed.
-But a persistent object is not expected to
-disappear when the test structure goes away.
-
-We need to
-separate the unfreed data objects which are memory leaks,
-from those which are persistent data objects.
-It's usually easiest to do this after the test by
-examining the return value of L</"unfreed_proberefs">.
-The L</ignore> named argument can also be used
-to pass L<Test::Weaken|/"NAME"> a closure
-that separates out persistent data objects "on the fly".
-These methods are described in detail
-L<below|/"ADVANCED TECHNIQUES">.
-
-=head2 Nieces
-
-A B<niece data object> (also a B<niece object> or just a B<niece>)
-is a data object that is part of the contents of a data 
-structure,
-but that is not a descendant of the top object of that
-data structure.
-When the OO technique called
-"inside-out objects" is used,
-most of the attributes of the blessed object will be
-nieces.
-
-In L<Test::Weaken|/"NAME">,
-usually the easiest way to deal with non-descendant contents
-is to make the
-data structure you are trying to test
-the B<lab rat> in a B<wrapper structure>.
-In this scheme,
-your test structure constructor will return a reference
-to the top object of the wrapper structure,
-instead of to the top object of the lab rat.
-
-The top object of the wrapper structure will be a B<wrapper array>.
-The wrapper array will contain the top object of the lab rat,
-along with other objects.
-The other objects need to be
-chosen so that the contents of the 
-wrapper array are exactly
-the wrapper array itself, plus the contents
-of the lab rat.
-
-It is not always easy to find the right objects to put into the wrapper array.
-For example, determining the contents of the lab rat may
-require a recursive scan from the lab rat's
-top object.
-Depending on the logical structure of the lab rat,
-this may be far from trivial.
-
-As an alternative to using a wrapper,
-it is possible to have L<Test::Weaken|/"NAME"> add
-contents "on the fly," while it is scanning the lab rat.
-This can be done using L<the C<contents> named argument|/contents>,
-which takes a closure as its value.
-
-=head2 Why the Test Structure is Passed Via a Closure
-
-L<Test::Weaken|/"NAME"> gets its test structure reference
-indirectly,
-as the return value from a
-B<test structure constructor>.
-Why so roundabout?
-
-Because the indirect way is the easiest.
-When you
-create the test structure
-in L<Test::Weaken|/"NAME">'s calling environment,
-it takes a lot of craft to avoid
-leaving
-unintended references to the test structure in that calling environment.
-It is easy to get this wrong.
-Those unintended references will
-create memory leaks that are artifacts of the test environment.
-Leaks that are artifacts of the test environment
-are very difficult to sort out from the real thing.
-
-The B<closure-local strategy> is the easiest way
-to avoid leaving unintended references to the
-contents of Perl data objects.
-Using the closure-local strategy means working
-entirely within a closure,
-using only data objects local to that closure.
-Data objects local to a closure will be destroyed when the
-closure returns, and any references they held will be released.
-The closure-local strategy makes
-it relatively easy to be sure that nothing is left behind
-that will hold an unintended reference
-to any of the contents
-of the test structure.
-
-Nothing prevents a user from
-subverting the closure-local strategy.
-A test structure constructor
-can return a reference to a test structure
-created from Perl data objects in any scope the user desires.
+A variable of builtin type GLOB may be
+a scalar which was assigned a GLOB value
+(a scalar-GLOB) or it may simply be a GLOB (a pure-GLOB).
+The issue that arises for
+C<Test::Weaken> is that,
+in the case of a scalar-GLOB,
+the scalar and the GLOB may be tied separately.
+At present,
+the underlying tied variable of the scalar side of a
+scalar-GLOB is ignored.
+Only the underlying tied variable of the GLOB
+is a child for
+C<Test::Weaken>'s purposes.
 
 =head2 Returns and Exceptions
 
-The methods of L<Test::Weaken|/"NAME"> do not return errors.
+The methods of C<Test::Weaken> do not return errors.
 Errors are always thrown as exceptions.
+
+=head1 EXPORTS
+
+By default, C<Test::Weaken> exports nothing.  Optionally, C<leaks()> may be
+requested in usual C<Exporter> style (see L<Exporter>).  (And C<poof()> from
+L</OLD FUNCTIONS> too if desired.)
+
+    use Test::Weaken 'leaks';   # import
+    my $tester = leaks (...);
 
 =head1 PORCELAIN METHODS
 
@@ -904,16 +800,13 @@ is_file($_, 't/snippet.t', 'leaks snippet')
 
 =end Marpa::Test::Display:
 
-    use Test::Weaken;
-    use English qw( -no_match_vars );
-
-    my $tester = Test::Weaken::leaks(
+    my $leaks = Test::Weaken::leaks(
         {   constructor => sub { Buggy_Object->new() },
             destructor  => \&destroy_buggy_object,
         }
     );
-    if ($tester) {
-        print "There are leaks\n" or Carp::croak("Cannot print to STDOUT: $ERRNO");
+    if ($leaks) {
+        print "There are leaks\n";
     }
 
 =begin Marpa::Test::Display:
@@ -922,71 +815,58 @@ is_file($_, 't/snippet.t', 'leaks snippet')
 
 =end Marpa::Test::Display:
 
-Returns a
-Perl false if no unfreed data objects were detected.
-If unfreed data objects were detected,
-returns an evaluated L<Test::Weaken|/"NAME"> class instance.
+Check for leaks in the object created by the constructor function and return
+either an evaluated C<Test::Weaken> object instance if there are leaks, or
+Perl false if there are no leaks.
 
-Instances of the L<Test::Weaken|/"NAME"> class are called B<testers>.
+Instances of the C<Test::Weaken> class are called B<testers>.
 An B<evaluated> tester is one on which the
-tests have been run,
+tests have been run
 and for which results are available.
 
 Users who only want to know if there were unfreed data objects can
-test the return value of L</"leaks"> for Perl true or false.
-Arguments to the L</"leaks"> static method are passed as a reference to
-a hash of named arguments.
-L</leaks> can also be called in a special "short form",
-where the test structure constructor and test structure destructor
+check the return value of C<leaks()> for Perl true or false.
+Arguments to C<leaks()> are passed as a
+hashref of named arguments.
+C<leaks()> can also be called in a "short form",
+where the constructor and destructor
 are passed directly as code references.
 
 =over 4
 
 =item C<constructor =E<gt> $coderef>
 
-The B<constructor> argument is required.
-Its value must be a code reference to
-the B<test structure constructor>.
-The test structure constructor
-should return a reference to the test structure.
-It is best to follow strictly the closure-local strategy,
-as described above.
+The C<constructor> argument is required.
+Its value must be a coderef returning a reference to the test data structure.
 
-    leaks ({ constructor => sub {
-                              return Some::Object->new(123);
-                            },
-          });
+    my $leaks = leaks ({ constructor => sub {
+                           return Some::Object->new(123);
+                         },
+                       });
 
-When L</"leaks"> is called using the "short form",
-the code reference to the test structure constructor
-must be the first argument to L</"leaks">.
+For "short form" the constructor coderef is the first
+argument,
 
     leaks (sub {
              return Some::Object->new(123);
           });
 
-The constructor can also return a list of objects all of which are to be
-checked.
+If the constructor returns a list of objects then all are checked.
 
     leaks (sub {
              return (Foo->new(), Bar->new());
           });
 
-Usually this is when two objects are somehow inter-related so they both
-should destroy together, or perhaps sub-parts of an object not reached by
-the contents tracing (though see C<contents> below for a more general way to
-reach such sub-parts.)
+Usually this is when two objects are somehow inter-related and should weaken
+away together, or perhaps sub-parts of an object not reached by the contents
+tracing (or see C<contents> below for a more general way to reach such
+sub-parts.)
 
 =item C<destructor =E<gt> $coderef>
 
-The B<destructor> argument is optional.
-If specified, its value must be a code reference
-to the B<test structure destructor>.
-
-Some test structures require a destructor to be called when they are freed.
-This destructor function is called just before C<Test::Weaken> tries
-to free the test structure (by setting to C<undef>).  It's called with the
-object as returned by the C<constructor>,
+The optional C<destructor> argument is called just before C<Test::Weaken>
+tries to free everything.  Some test objects or structures may require some
+sort of explicit destruction action when they're to be freed.
 
     leaks ({ constructor => sub { Foo->new },
              destructor  => sub {
@@ -996,11 +876,9 @@ object as returned by the C<constructor>,
           });
 
 If the C<constructor> returns multiple values then they're all passed to the
-C<destructor>.
-The return value of the test structure destructor is ignored.
+C<destructor>.  The return value from C<destructor> is ignored.
 
-When L</"leaks"> is called using the "short form",
-a code reference to the test structure destructor is the optional, second argument to L</"leaks">.
+For "short form" the destructor is an optional second argument,
 
     leaks (sub { Foo->new },
            sub {
@@ -1008,7 +886,27 @@ a code reference to the test structure destructor is the optional, second argume
              $foo->destroy;
            });
 
-=item ignore
+=item C<ignore =E<gt> $coderef>
+
+=item C<ignore_preds =E<gt> [ $coderef, $coderef, ...]>
+
+=item C<ignore_class =E<gt> $classname>
+
+=item C<ignore_classes =E<gt> [ $classname, $classname, ... ]>
+
+=item C<ignore_object =E<gt> $ref>
+
+=item C<ignore_objects =E<gt> [ $ref, $ref, ... ]>
+
+Ignore some things.  When a thing is ignored it's not tracked for leaks and
+its contents are not examined.
+
+C<ignore> and C<ignore_preds> take predicate functions.  If any of them
+return true then the thing C<$ref> refers to is ignored.
+
+    $bool = &$coderef ($ref);
+
+For example
 
 =begin Marpa::Test::Display:
 
@@ -1018,16 +916,15 @@ is_file($_, 't/ignore.t', 'ignore snippet')
 
 =end Marpa::Test::Display:
 
-    sub ignore_my_global {
-        my ($probe) = @_;
-        return ( Scalar::Util::blessed($probe) && $probe->isa('MyGlobal') );
+    sub ignore_all_tied_hashes {
+        my ($ref) = @_;
+        return (ref $ref eq 'HASH'
+                && defined (tied %$ref));
     }
-
     my $tester = Test::Weaken::leaks(
-        {   constructor => sub { MyObject->new() },
-            ignore      => \&ignore_my_global,
-        }
-);
+        { constructor => sub { MyObject->new() },
+          ignore      => \&ignore_all_tied_hashes,
+        });
 
 =begin Marpa::Test::Display:
 
@@ -1035,85 +932,62 @@ is_file($_, 't/ignore.t', 'ignore snippet')
 
 =end Marpa::Test::Display:
 
-The B<ignore> argument is optional.
-It can be used to make a decision,
-specific to each Perl data object,
-on whether that object is
-ignored, or tracked and examined for children.
+C<ignore_class> and C<ignore_classes> ignore blessed objects which are of
+the given class or classes.  For example,
 
-Use of the L</ignore> argument should be avoided.
-Filtering the probe references that are
-returned by
-L</"unfreed_proberefs">
-is easier, safer and
-faster.
-But
-filtering after the fact
-is not always practical.
-For example, if large or complicated sub-objects
-need to be filtered out,
-it may be easiest to do so
-before they end up in the results.
+    my $leaks = Test::Weaken::leaks(
+        { constructor => sub { MyObject->new() },
+          ignore_class => 'My::Singleton',
+        }
 
-When specified, the value of the L</ignore> argument must be a
-reference to a callback subroutine.
-If the reference to the callback subroutine
-is C<$ignore>, L<Test::Weaken|/"NAME">'s call to it will be the equivalent
-of C<< $ignore->($safe_copy) >>,
-where C<$safe_copy> is a copy of 
-a probe reference to a Perl data object.
+    my $leaks = Test::Weaken::leaks(
+        { constructor => sub { MyObject->new() },
+          ignore_classes => [ 'My::Singleton',
+                              'My::PrinterDriver' ],
+        }
 
-The L</ignore> callback will be made once
-for every Perl data object when it is about
-to be tracked,
-and once for every data object when it is about to be
-examined for children.
-The callback subroutine should return a Perl true value if the probe reference is
-to a data object which should be ignored.
-If the data object should be tracked and examined for children,
-the callback subroutine should return a Perl false.
+Objects are checked with
 
-For safety, L<Test::Weaken|/"NAME"> passes
-the L</ignore> callback a copy of the internal
-probe reference.
-This prevents the user
-altering
-the probe reference itself.
-However,
-the data object referred to by the probe reference is not copied.
-Everything that is referred to, directly or indirectly,
-by this
-probe reference
-should be left unchanged by the L</ignore>
-callback.
-The result of modifying the probe referents might be
-an exception, an abend, an infinite loop, or erroneous results.
+    blessed($ref) && $ref->isa($classname)
 
-The example above shows a common use of the L</ignore>
-callback.
-In this a blessed object is ignored, I<but not>
-the references to it.
-This is typically what is wanted.
-Often you know certain
-objects are outside the contents of your test structure,
-but you have references to those objects that I<are> part of
-the contents of your test structure.
-In that case, you want to know if the references are leaking,
-but you do not want to see reports 
-when the outside objects themselves are persistent.
-Compare this with the example for the L</contents> callback below.
+which reaches any class-specific C<isa()> in the object.  That allows
+classes to masquerade or have a dynamic "isa".  Doing so is unusual but
+normally fine and can be highly desirable in things like lazy loaders.
 
-L</ignore> callbacks are best kept simple.
-Defer as much of the analysis as you can
-until after the test is completed.
-L</ignore> callbacks 
-can be a significant overhead.
+C<ignore_object> and C<ignore_objects> ignore the particular things referred
+to by the each given C<$ref>.  For example,
 
-L<Test::Weaken|/"NAME"> offers some help in debugging
-L</ignore> callback subroutines.
-See L<below|/"Debugging Ignore Subroutines">.
+    my $leaks = Test::Weaken::leaks(
+        { constructor => sub { MyObject->new() },
+          ignore_object => \%global_data,
+        }
+
+    my $leaks = Test::Weaken::leaks(
+        { constructor => sub { MyObject->new() },
+          ignore_objects => [ $obj1, $obj2 ],
+        }
+
+For both C<ignore_object> and C<ignore_objects> any C<undef>s among the refs
+are ignored.  This is handy if a global might or might not have been
+initialized yet.  These options are called "object" because they're most
+often used with blessed objects, but unblessed things are fine too.
+
+C<ignore> callbacks should not change the contents of C<$ref>.  Doing so
+might cause an exception, an infinite loop, or erroneous results.  See
+L</Debugging Ignore Subroutines> for a little help against bad C<ignore>.
+
+When comparing references in a predicate it's good to use
+C<Scalar::Util::refaddr()>.  Plain C<$ref==$something> can be tricked if
+C<$ref> is an object with overloaded numize or C<==> (see L<overload>).
+
+Another way to ignore is let globals etc go through as leaks and then filter
+them from the C<$leaks-E<gt>unfreed_proberefs()> afterwards.  The benefit of
+C<ignore> is that it excludes object contents too.
 
 =item contents
+
+An optional C<contents> function can tell C<Test::Weaken> about additional
+Perl data objects which should be checked.
 
 =begin Marpa::Test::Display:
 
@@ -1123,14 +997,18 @@ is_file($_, 't/contents.t', 'contents sub snippet')
 
 =end Marpa::Test::Display:
 
-    sub contents {
-        my ($probe) = @_;
-        return unless Scalar::Util::reftype $probe eq 'REF';
-        my $thing = ${$probe};
-        return unless Scalar::Util::blessed($thing);
-        return unless $thing->isa('MyObject');
-        return ( $thing->data, $thing->moredata );
-    } ## end sub MyObject::contents
+    sub my_extra_contents {
+      my ($ref) = @_;
+      if (blessed($ref) && $ref->isa('MyObject')) {
+        return $ref->data, $ref->moredata;
+      } else {
+        return;
+      }
+    }
+    my $leaks = Test::Weaken::leaks(
+        { constructor => sub { return MyObject->new },
+          contents    => \&my_extra_contents
+        });
 
 =begin Marpa::Test::Display:
 
@@ -1138,102 +1016,24 @@ is_file($_, 't/contents.t', 'contents sub snippet')
 
 =end Marpa::Test::Display:
 
-=begin Marpa::Test::Display:
+The given C<$coderef> is called for each Perl data object.  It should return
+a list of additional Perl data objects, or an empty list if no extra
+contents.
 
-## start display
-## next 2 displays
-is_file($_, 't/contents.t', 'contents named arg snippet')
+    @extra_contents = &$coderef ($ref);
 
-=end Marpa::Test::Display:
+C<contents> allows OOPery such as "inside-out" where object contents are
+held separately.  It can also be used on wrappers for C-code objects where
+some of the contents of a widget etc are not in Perl level structures but
+only available through object method calls etc.
 
-    my $tester = Test::Weaken::leaks(
-        {   constructor => sub { return MyObject->new },
-            contents    => \&MyObject::contents
-        }
-    );
-
-=begin Marpa::Test::Display:
-
-## end display
-
-=end Marpa::Test::Display:
-
-The B<contents> argument is optional.
-It can be used to tell L<Test::Weaken|/"NAME"> about additional
-Perl data objects that need to be included,
-along with their children,
-in order to find all of the contents of the test data structure.
-
-Use of the L</contents> argument should be avoided
-when possible.
-Instead of using the L</contents> argument, it is
-often possible to have the constructor
-create a reference to a "wrapper structure",
-L<as described above in the section on nieces|/"Nieces">.
-The L</contents> argument is
-for situations where the "wrapper structure"
-technique is not practical.
-If, for example,
-creating the wrapper structure would involve a recursive
-descent through the lab rat object,
-using the L</contents> argument may be easiest.
-
-When specified, the value of the L</contents> argument must be a
-reference to a callback subroutine.
-If the reference is C<$contents>,
-L<Test::Weaken|/"NAME">'s call to it will be the equivalent
-of C<< $contents->($safe_copy) >>,
-where C<$safe_copy> is a copy of the probe reference to
-a Perl data object.
-The L</contents> callback is made once
-for every Perl data object
-when that Perl data object is
-about to be examined for children.
-This can impose a significant overhead.
-
-The example of a L</contents> callback above adds data objects whenever it
-encounters a I<reference> to a blessed object.
-Compare this with the example for the L</ignore> callback above.
-Checking for references to blessed objects will not produce the same
-behavior as checking for the blessed objects themselves --
-there may be many references to a single
-object.
-
-The callback subroutine will be evaluated in array context.
-It should return a list of additional Perl data objects
-to be tracked and examined for children.
-This list may be empty.
-
-The L</contents> and L</ignore> callbacks can be used together.
-If, for an argument Perl data object, the L</ignore> callback returns
-true, the objects returned by the L</contents> callback
-will be used B<instead> of the children for the argument data object.
-If, for an argument Perl data object, the L</ignore> callback returns
-false, the objects returned by the L</contents> callback
-will be used B<in addition> to the children for the argument data object.
-Together,
-the L</contents> and L</ignore> callbacks can be used
-to completely customize the way in which
-L<Test::Weaken|/"NAME">
-determines the contents of a data structure.
-
-For safety, L<Test::Weaken|/"NAME"> passes
-the L</contents> callback a copy of the internal
-probe reference.
-This prevents the user
-altering
-the probe reference itself.
-However,
-the data object referred to by the probe reference is not copied.
-Everything that is referred to, directly or indirectly,
-by this
-probe reference
-should be left unchanged by the L</contents>
-callback.
-The result of modifying the probe referents might be
-an exception, an abend, an infinite loop, or erroneous results.
+C<contents> and C<ignore> can be used together.  C<ignore> is called first
+and if not ignored then C<contents> is called.
 
 =item tracked_types
+
+Optional C<tracked_types> is an arrayref of additional builtin types to
+track.
 
 =begin Marpa::Test::Display:
 
@@ -1258,20 +1058,16 @@ is_file($_, 't/filehandle.t', 'tracked_types snippet')
 
 =end Marpa::Test::Display:
 
-The B<tracked_types> argument is optional.
-If specified, the value of the
-B<tracked_types> argument must be a reference to an array
-of the names of additional builtin types to track.
+The default tracking is per L</Tracking and Children> above.  The additional
+types which may be tracked are
 
-Objects of builtin types ARRAY, HASH, REF,
-SCALAR, VSTRING, and CODE are tracked
-by default.
-The builtin types that are not tracked,
-and which you may wish to add,
-are GLOB, IO, FORMAT and LVALUE.
-They are not tracked by default because,
-for L<reasons given below|/"Tracked Objects">,
-tracking them usually causes more trouble than it saves.
+    GLOB
+    IO
+    FORMAT
+    LVALUE
+
+These names are per C<reftype()> of L<Scalar::Util>.  See L</File Handles>
+below for setting up to track GLOBs as filehandles.
 
 =back
 
@@ -1285,22 +1081,11 @@ is_file($_, 't/snippet.t', 'unfreed_proberefs snippet')
 
 =end Marpa::Test::Display:
 
-    use Test::Weaken;
-    use English qw( -no_match_vars );
-
     my $tester = Test::Weaken::leaks( sub { Buggy_Object->new() } );
     if ($tester) {
         my $unfreed_proberefs = $tester->unfreed_proberefs();
-        my $unfreed_count     = @{$unfreed_proberefs};
-        printf "%d of %d references were not freed\n",
-            $tester->unfreed_count(), $tester->probe_count()
-            or Carp::croak("Cannot print to STDOUT: $ERRNO");
-        print "These are the probe references to the unfreed objects:\n"
-            or Carp::croak("Cannot print to STDOUT: $ERRNO");
-        for my $ix ( 0 .. $#{$unfreed_proberefs} ) {
-            print Data::Dumper->Dump( [ $unfreed_proberefs->[$ix] ],
-                ["unfreed_$ix"] )
-                or Carp::croak("Cannot print to STDOUT: $ERRNO");
+        foreach my $ref (@$unfreed_proberefs) {
+            print "unfreed: $ref\n";
         }
     }
 
@@ -1310,14 +1095,12 @@ is_file($_, 't/snippet.t', 'unfreed_proberefs snippet')
 
 =end Marpa::Test::Display:
 
-Returns a reference to an array of probe references to the unfreed data objects.
-Throws an exception if there is a problem,
-for example if the tester has not yet been evaluated.
+Return an arrayref of references to unfreed data objects.  Throws an
+exception if there is a problem, for example if the tester has not yet been
+evaluated.
 
-The return value can be examined
-to pinpoint the source of a leak.
-A user may also analyze the return value
-to produce her own statistics about unfreed data objects.
+The return value can be examined to pinpoint the source of a leak or produce
+statistics about unfreed data objects.
 
 =head2 unfreed_count
 
@@ -1329,13 +1112,11 @@ is_file($_, 't/snippet.t', 'unfreed_count snippet')
 
 =end Marpa::Test::Display:
 
-    use Test::Weaken;
-    use English qw( -no_match_vars );
-
     my $tester = Test::Weaken::leaks( sub { Buggy_Object->new() } );
-    next TEST if not $tester;
-    printf "%d objects were not freed\n", $tester->unfreed_count(),
-        or Carp::croak("Cannot print to STDOUT: $ERRNO");
+    if ($tester) {
+      printf "%d objects were not freed\n",
+        $tester->unfreed_count();
+    }
 
 =begin Marpa::Test::Display:
 
@@ -1343,9 +1124,8 @@ is_file($_, 't/snippet.t', 'unfreed_count snippet')
 
 =end Marpa::Test::Display:
 
-Returns the count of unfreed data objects.
-This count will be exactly the length of the array referred to by
-the return value of the L</"unfreed_proberefs"> method.
+Return the count of unfreed data objects.
+This is the  length of the C<unfreed_proberefs()> arrayref.
 Throws an exception if there is a problem,
 for example if the tester has not yet been evaluated.
 
@@ -1359,9 +1139,6 @@ is_file($_, 't/snippet.t', 'probe_count snippet')
 
 =end Marpa::Test::Display:
 
-        use Test::Weaken;
-        use English qw( -no_match_vars );
-
         my $tester = Test::Weaken::leaks(
             {   constructor => sub { Buggy_Object->new() },
                 destructor  => \&destroy_buggy_object,
@@ -1369,8 +1146,7 @@ is_file($_, 't/snippet.t', 'probe_count snippet')
         );
         next TEST if not $tester;
         printf "%d of %d objects were not freed\n",
-            $tester->unfreed_count(), $tester->probe_count()
-            or Carp::croak("Cannot print to STDOUT: $ERRNO");
+            $tester->unfreed_count(), $tester->probe_count();
 
 =begin Marpa::Test::Display:
 
@@ -1378,12 +1154,12 @@ is_file($_, 't/snippet.t', 'probe_count snippet')
 
 =end Marpa::Test::Display:
 
-Returns the total number of probe references in the test,
+Return the total number of probe references in the test,
 including references to freed data objects.
 This is the count of probe references
-after L<Test::Weaken|/"NAME"> was finished finding the descendants of
+after C<Test::Weaken> was finished finding the descendants of
 the test structure reference,
-but before L<Test::Weaken|/"NAME"> called the test structure destructor or reset the
+but before C<Test::Weaken> called the test structure destructor or reset the
 test structure reference to C<undef>.
 Throws an exception if there is a problem,
 for example if the tester has not yet been evaluated.
@@ -1405,16 +1181,12 @@ is_file($_, 't/snippet.t', 'new snippet')
 
 =end Marpa::Test::Display:
 
-    use Test::Weaken;
-    use English qw( -no_match_vars );
-
     my $tester        = Test::Weaken->new( sub { My_Object->new() } );
     my $unfreed_count = $tester->test();
     my $proberefs     = $tester->unfreed_proberefs();
     printf "%d of %d objects freed\n",
         $unfreed_count,
-        $tester->probe_count()
-        or Carp::croak("Cannot print to STDOUT: $ERRNO");
+        $tester->probe_count();
 
 =begin Marpa::Test::Display:
 
@@ -1443,16 +1215,12 @@ is_file($_, 't/snippet.t', 'test snippet')
 
 =end Marpa::Test::Display:
 
-    use Test::Weaken;
-    use English qw( -no_match_vars );
-
     my $tester = Test::Weaken->new(
         {   constructor => sub { My_Object->new() },
             destructor  => \&destroy_my_object,
         }
     );
-    printf "There are %s\n", ( $tester->test() ? 'leaks' : 'no leaks' )
-        or Carp::croak("Cannot print to STDOUT: $ERRNO");
+    printf "There are %s\n", ( $tester->test() ? 'leaks' : 'no leaks' );
 
 Converts an unevaluated tester into an evaluated tester.
 It does this by performing the test
@@ -1475,19 +1243,88 @@ the count returned by L</"unfreed_count">.
 
 =head1 ADVANCED TECHNIQUES
 
+=head2 File Handles
+
+File handles are references to GLOBs and by default are not tracked.  If a
+handle is a package global like C<open FH, "</file/name"> then that's
+probably what you want.  But if you use anonymous handles either from the
+L<Symbol> module or Perl 5.6 autovivified then it's good to check the handle
+is freed.  This can be done by asking for GLOB and IO in C<tracked_types>,
+and extracting the IO from any GLOB encountered,
+
+    sub contents_glob_IO {
+      my ($ref) = @_;
+      if (ref($ref) eq 'GLOB') {
+        return *$ref{IO};
+      } else {
+        return;
+      }
+    }
+
+    my $leaks = Test::Weaken::leaks
+      ({ constructor => sub { return MyFileObject->new },
+         contents => \&contents_glob_IO,
+         tracked_types => [ 'GLOB', 'IO' ],
+       });
+
+It's good to check the IO too since it's possible a reference elsewhere
+could keep it alive, in particular a Perl-level "dup" can make another
+handle GLOB pointing to that same IO,
+
+    open my $dupfh, '<', $fh;
+    # $dupfh holds and uses *$fh{IO}
+
+See L<Test::Weaken::ExtraBits> for such a C<contents_glob_IO()>, if you want
+to use it from a module rather than copying this couple of lines.
+
+=head2 Array and Hash Keys and Values
+
+As noted above each value in a hash or array is a separate scalar and is
+tracked separately.  Usually their only use is the containing hash or array,
+but it's possible to hold a reference to a particular element, which
+C<leaks()> can notice causing it to be unfreed.
+
+    my %hash = (foo => 123);
+    my $ref = \$hash{'foo'};  # ref to hash value
+
+It's possible to put specific scalars as the values in a hash or array.
+They might be globals or whatever.  Usually that would arise from XSUB code,
+or see L<Array::RefElem> for similar trickery from Perl code,
+
+    use Array::RefElem 'av_store';
+    my $global;
+    my @array;
+    av_store (@array, 0, $global);
+
+In XSUB code a little care is needed that the refcounts is correct after any
+C<av_store()> or C<hv_store()> takes ownership of one count etc.  In all
+cases C<Test::Weaken> can notice when an array or hash element doesn't
+destroy with its container.  C<ignore> etc will be needed for those which
+are intentionally persistent.
+
+Hash keys are not separate scalars.  They're strings managed entirely by the
+hash and there's nothing separate for C<Test::Weaken> to track.
+
+L<Tie::RefHash> and similar which allow arbitrary objects as keys of a hash
+do so by using the object C<refaddr()> internally as the string key but
+presenting the object from C<keys()>, C<each()>, etc.  As of L<Tie::RefHash>
+1.39 and L<Tie::RefHash::Weak> 0.09 those two modules hold the key objects
+within their tie object and therefore those key objects are reached by
+C<Test::Weaken> for leak checking in the usual way.
+
 =head2 Tracing Leaks
 
 =head3 Avoidance
 
-L<Test::Weaken|/"NAME"> makes tracing leaks easier, but avoidance is
+C<Test::Weaken> makes tracing leaks easier, but avoidance is
 still by far the best way,
-and L<Test::Weaken|/"NAME"> helps with that.
+and C<Test::Weaken> helps with that.
 You need to use test-driven development, L<Test::More>,
 modular tests in a C<t/> subdirectory,
 and revision control.
 These are all very good ideas for many other reasons.
 
-Make L<Test::Weaken|/"NAME"> part of your test suite.
+Make C<Test::Weaken> part of your test suite.
 Test frequently, so that when a leak occurs,
 you'll have a good idea of what changes were made since
 the last successful test.
@@ -1511,8 +1348,8 @@ to aid in identifying the source of a leak.
 You can quasi-uniquely identify data objects using
 the referent addresses of the probe references.
 A referent address
-can be determined by using 
-L<Scalar::Util/refaddr>.
+can be determined by using C<refaddr()> from
+L<Scalar::Util>.
 You can also obtain the referent address of a reference by adding 0
 to the reference.
 
@@ -1610,7 +1447,7 @@ is_file($_, 't/ignore.t', 'check_ignore 4 arg snippet')
 =end Marpa::Test::Display:
 
 It can be hard to determine if
-L</ignore> callback subroutines
+C<ignore> callback subroutines
 are inadvertently
 modifying the test structure.
 The
@@ -1696,7 +1533,7 @@ maximum error count.
 If the reporting depth is a non-negative number, the error
 message includes a dump from L<Data::Dumper> of the
 test structure.
-L<Data::Dumper's|Data::Dumper> C<Maxdepth>
+C<Data::Dumper>'s C<Maxdepth>
 for reporting purposes is the reporting depth as described above.
 
 A user who wants other features, such as deep checking
@@ -1704,22 +1541,22 @@ of the test structure
 for strengthened references,
 can easily 
 copy
-L<Test::Weaken::check_ignore|/"check_ignore">
-from the L<Test::Weaken|/"NAME"> source
+C<check_ignore()>
+from the C<Test::Weaken> source
 and hack it up.
-L<check_ignore|/"check_ignore">
+C<check_ignore()>
 is a static method
-that does not use any L<Test::Weaken|/"NAME">
+that does not use any C<Test::Weaken>
 package resources.
 The hacked version can reside anywhere,
 and does not need to
-be part of the L<Test::Weaken|/"NAME"> package.
+be part of the C<Test::Weaken> package.
 
 =head1 XSUB Mortalizing
 
-When a C language XSUB returns a newly created scalar it should "mortalize"
-so the scalar is freed once the caller has finished with it (see
-L<perlguts/Reference Counts and Mortality>).  Failing to do so leaks memory.
+When a C code XSUB returns a newly created scalar it should "mortalize" so
+the scalar is freed once the caller has finished with it.  See
+L<perlguts/Reference Counts and Mortality>.  Failing to do so leaks memory.
 
     SV *ret = newSViv(123);
     sv_2mortal (ret);   /* must mortalize */
@@ -1733,11 +1570,11 @@ scalar,
                        });
     if ($leaks) ...
 
-Don't store to a local scalar and then return that.  Doing so will only
-check the local scalar, not the one returned by C<somexsub()>.
+Don't store to a new local scalar and then return that since doing so will
+only check the local scalar, not the one made by C<somexsub()>.
 
-If you want the value for further calculations then take a reference to the
-return then look through that for the value.
+If you want the value for further calculations then first take a reference
+to the return and then look through that for the value.
 
     leaks (sub {
              my $ref = \( somexsub() );
@@ -1747,8 +1584,9 @@ return then look through that for the value.
            });
 
 If an XSUB returns a list of values then take a reference to each as
-follows.  This works because C<map> and C<for> make the loop variable
-(either C<$_> or named) an alias to each value successively.
+follows.  This works because C<map> and C<for> make the loop variable (C<$_>
+or named) an alias to each value successively (see L<perlfunc/map> and
+L<perlsyn/Foreach Loops>).
 
     leaks (sub {
              return [ map {\$_} somexsub() ];
@@ -1763,12 +1601,12 @@ follows.  This works because C<map> and C<for> make the loop variable
              return \@refs;
            });
 
-Don't store a returned list to an array (either named or anonymous) as this
+Don't store a returned list to an array (named or anonymous) since this
 copies into new scalars in that array and the returned ones from
 C<somexsub()> then aren't checked.
 
-If you want the values from a list for extra calculations then take the
-references first and look through them for the values like the single case
+If you want the returned values for extra calculations then take the
+references first and look through them for the values, as in the single case
 above.  For example,
 
     leaks (sub {
@@ -1784,38 +1622,83 @@ pre-calculated constant or a global variable it maintains.  In that case the
 scalar intentionally won't weaken away and this C<leaks()> checking is not
 applicable.
 
-Returning the same scalar every time occurs in pure Perl too from an
-anonymous constant subr, such as created by the C<constant> module (see
-L<constant>).  This is unlikely to arise directly, but could be encountered
-through a scalar ref within an object etc.
+Returning the same scalar every time occurs in pure Perl too with an
+anonymous constant subr such as created by the C<constant> module (see
+L<constant>).  This is unlikely to arise directly, but might be seen through
+a scalar ref within an object etc.
 
     # FOO() returns same scalar every time
     *FOO = sub () { 123 };
 
-    # likewise from the constant module
+    # same from the constant module
     use constant BAR => 456;
 
-There's no way to tell the intended lifespan of an XSUB return, but
-generally if the code has any sort of C<newSV()> or C<sv_newmortal()> etc
-making a new scalar every time then it ought to weaken away.
+It's up to an XSUB etc how long return values are supposed to live.  But
+generally if the code has any sort of C<newSV()> or C<sv_newmortal()> etc to
+make a new scalar as its return then that ought to weaken away.
 
 The details of an XSUB return are often hidden in a F<typemap> file for
-brevity and consistency (see L<perlxs/The Typemap>).  The supplied types
-(F<Extutils/typemap>) are hard to get wrong, but code with explicit
-C<PUSHs()> etc is worth checking.  Generally too much mortalizing causes
-negative refcounts and probable segfaults, and not enough mortalizing leaks
-memory.
+brevity and consistency (see L<perlxs/The Typemap>).  The standard typemap
+conversions of F<Extutils/typemap> are easy to use correctly.  But code with
+explicit C<PUSHs()> etc is worth checking.  The reference counting rules for
+C<av_push()> etc are slightly subtle too if building nested structures in
+XS.  Usually missing mortalizing or ref count sinking will leak objects
+which C<Test::Weaken> can detect.  Too much mortalizing or ref count sinking
+will cause negative refcounts and probable segfaults.
 
-=head1 EXPORTS
+=head1 OLD FUNCTIONS
 
-By default, L<Test::Weaken|/"NAME"> exports nothing.
-Optionally, L</"leaks"> may be exported.
+The following C<poof()> was from C<Test::Weaken> 1.0 and has been superseded
+in 2.0 by C<leaks()> which is easier to use.
+
+=over
+
+=item C<my $unfreed_count = Test::Weaken::poof(sub { return $obj });>
+
+=item C<my ($weak_count, $strong_count, $weak_unfreed_aref, $strong_unfreed_aref) = Test::Weaken::poof(sub { return $obj });>
+
+Check that C<$obj> returned by the given constructor subroutine is freed
+when weakened.  This is the same as C<leaks()> except for the style of the
+return values.
+
+In scalar context the return is a count of unfreed references.  If
+everything is freed then this is 0.
+
+    my $unfreed_count = Test::Weaken::poof(sub { return [1,2,3] });
+    if ($unfreed_count == 0 {
+      print "No leaks\n";
+    } else {
+      print "There were leaks\n";
+    }
+
+In array context the return is four values
+
+    my ($weak_count, $strong_count,
+        $weak_unfreed_aref, $strong_unfreed_aref)
+      = Test::Weaken::poof (sub { return $obj });
+
+    $weak_count             count of weak refs examined
+    $strong_count           count of strong refs examined
+    $weak_unfreed_aref      arrayref of unfreed weak refs
+    $strong_unfreed_aref    arrayref of unfreed strong refs
+
+The counts are total references examined.  The arrayrefs give the unfreed
+ones.  A distinction is made between strong references and weak references
+in the test structure.  If there's no leaks then both C<$weak_unfreed_aref>
+and C<$strong_unfreed_aref> are empty arrays.
+
+There's usually not much interest in whether an unfreed thing was from a
+weak or strong reference.  In the new C<leaks()> the C<unfreed_proberefs()>
+gives both together.  The could be separated there by checking C<isweak()>
+on each if desired.
+
+=back
 
 =head1 IMPLEMENTATION DETAILS
 
 =head2 Overview
 
-L<Test::Weaken|/"NAME"> first recurses through the test structure.
+C<Test::Weaken> first recurses through the test structure.
 Starting from the test structure reference,
 it examines data objects for children recursively,
 until it has found the complete contents of the test structure.
@@ -1836,97 +1719,52 @@ if there is one.
 
 Finally, the test structure reference is set to C<undef>.
 This should trigger the deallocation of the entire contents of the test structure.
-To check that this happened, L<Test::Weaken|/"NAME"> dereferences the probe references.
+To check that this happened, C<Test::Weaken> dereferences the probe references.
 If the referent of a probe reference was deallocated,
 the value of that probe reference will be C<undef>.
 If a probe reference is still defined at this point,
 it refers to an unfreed Perl data object.
 
-=head2 Tracked Objects
+=head2 Why the Test Structure is Passed Via a Closure
 
-By default,
-objects of builtin types ARRAY, HASH, REF,
-SCALAR, VSTRING, and CODE are tracked.
-By default,
-GLOB, IO, FORMAT and LVALUE objects are not tracked.
+C<Test::Weaken> gets its test structure reference
+indirectly,
+as the return value from a
+B<test structure constructor>.
+Why so roundabout?
 
-L<Data::Dumper> does not deal with
-IO and LVALUE objects
-gracefully,
-issuing a cryptic warning whenever it encounters them.
-Since L<Data::Dumper> is a Perl core module
-in extremely wide use, this suggests that these IO and LVALUE
-objects are, to put it mildly,
-not commonly encountered as the contents of data structures.
+Because the indirect way is the easiest.
+When you
+create the test structure
+in C<Test::Weaken>'s calling environment,
+it takes a lot of craft to avoid
+leaving
+unintended references to the test structure in that calling environment.
+It is easy to get this wrong.
+Those unintended references will
+create memory leaks that are artifacts of the test environment.
+Leaks that are artifacts of the test environment
+are very difficult to sort out from the real thing.
 
-GLOB objects
-usually either refer
-to an entry in the Perl symbol table,
-or are associated with a filehandle.
-Either way, the assumption they will share
-the lifetime of their parent data object
-is thrown into doubt.
-The trouble saved by ignoring GLOB objects seems 
-to outweigh any advantage that would come from tracking
-them.
-IO objects, which are ignored because of L<Data::Dumper> issues,
-are often associated with GLOB objects.
+The B<closure-local strategy> is the easiest way
+to avoid leaving unintended references to the
+contents of Perl data objects.
+Using the closure-local strategy means working
+entirely within a closure,
+using only data objects local to that closure.
+Data objects local to a closure will be destroyed when the
+closure returns, and any references they held will be released.
+The closure-local strategy makes
+it relatively easy to be sure that nothing is left behind
+that will hold an unintended reference
+to any of the contents
+of the test structure.
 
-FORMAT objects are always global, and therefore
-can be expected to be persistent.
-Use of FORMAT objects is officially deprecated.
-L<Data::Dumper> does not deal with
-FORMAT objects gracefully,
-issuing a cryptic warning whenever it encounters one.
-
-This version of L<Test::Weaken|/"NAME"> might someday be run
-in a future version of Perl
-and encounter builtin types it does not know about.
-By default, those new builtin types will not be tracked.
-Any builtin type may be added to the list of builtin types to be
-tracked with the
-L<tracked_types named argument|/"tracked_types">.
-
-=head2 Examining Objects for Children
-
-Objects of builtin type
-ARRAY, HASH, REF,
-SCALAR, VSTRING, GLOB, and LVALUE
-are examined for children.
-Specifically,
-elements of ARRAY objects,
-values of HASH objects,
-and referents of REF objects
-are children.
-Underlying tied variables are also children.
-
-Objects of type CODE are
-not examined for children.
-Not examining CODE objects for children
-can be seen as a limitation, because
-closures do hold internal references to data objects.
-Future versions of L<Test::Weaken|/"NAME"> may examine CODE objects.
-
-A variable of builtin type GLOB may be
-a scalar which was assigned a GLOB value
-(a scalar-GLOB) or it may simply be a GLOB (a pure-GLOB).
-The issue that arises from
-L<Test::Weaken|/"NAME">'s standpoint is that,
-in the case of a scalar-GLOB,
-the scalar and the GLOB may be tied separately.
-At present,
-the underlying tied variable of the scalar side of a
-scalar-GLOB is ignored.
-Only the underlying tied variable of the GLOB
-is a child for
-L<Test::Weaken|/"NAME">'s purposes.
-
-The default method of recursing through a test structure
-to find its contents can be customized.
-The L</ignore> callback can be used to force an object
-not to be examined for children.
-The L</contents> callback can be used to add user-determined
-contents to the test structure.
+Nothing prevents a user from
+subverting the closure-local strategy.
+A test structure constructor
+can return a reference to a test structure
+created from Perl data objects in any scope the user desires.
 
 =head1 AUTHOR
 
@@ -1936,9 +1774,8 @@ Jeffrey Kegler
 
 Please report any bugs or feature requests to C<bug-test-weaken at
 rt.cpan.org>, or through the web interface at
-L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Test-Weaken>.  I
-will be notified, and then you'll automatically be notified of
-progress on your bug as I make changes.
+
+    http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Test-Weaken
 
 =head1 SUPPORT
 
@@ -1976,29 +1813,21 @@ L<http://search.cpan.org/dist/Test-Weaken>
 
 =head1 SEE ALSO
 
-L<Test::Weaken|/"NAME">
+L<Test::Weaken::ExtraBits>, miscellaneous extras
+
+L<Test::Weaken::Gtk2>, extras for use with Gtk2-Perl
+
+L<Scalar::Util>,
+L<Scalar::Util::Instance>
+
+C<Test::Weaken>
 at this point is robust
 and has 
 seen extensive use.
 Its tracking of memory is careful enough
 that it has even stumbled upon
-L<a bug in perl
-itself|http://rt.perl.org/rt3/Public/Bug/Display.html?id=67838>.
-
-L<Test::Weaken::Gtk2>
-is a CPAN Module of "helper" functions
-for L<Test::Weaken|/"NAME">.
-L<Test::Weaken::Gtk2>
-is specifically aimed at the needs of users
-of L<Gtk2>,
-but can also be used
-as an example of how
-an expert user extends and adapts
-L<Test::Weaken|/"NAME">.
-Kevin Ryde, the author of 
-L<Test::Weaken::Gtk2>,
-has been a important contributor to 
-L<Test::Weaken|/"NAME">.
+a bug in perl 
+itself L<http://rt.perl.org/rt3/Public/Bug/Display.html?id=67838>.
 
 =head1 ACKNOWLEDGEMENTS
 
@@ -2023,6 +1852,211 @@ it under the same terms as Perl 5.10.
 =cut
 
 1;    # End of Test::Weaken
+
+
+
+# For safety, L<Test::Weaken|/"NAME"> passes
+# the L</contents> callback a copy of the internal
+# probe reference.
+# This prevents the user
+# altering
+# the probe reference itself.
+# However,
+# the data object referred to by the probe reference is not copied.
+# Everything that is referred to, directly or indirectly,
+# by this
+# probe reference
+# should be left unchanged by the L</contents>
+# callback.
+# The result of modifying the probe referents might be
+# an exception, an abend, an infinite loop, or erroneous results.
+
+# Use of the L</contents> argument should be avoided
+# when possible.
+# Instead of using the L</contents> argument, it is
+# often possible to have the constructor
+# create a reference to a "wrapper structure",
+# L<as described above in the section on nieces|/"Nieces">.
+# The L</contents> argument is
+# for situations where the "wrapper structure"
+# technique is not practical.
+# If, for example,
+# creating the wrapper structure would involve a recursive
+# descent through the lab rat object,
+# using the L</contents> argument may be easiest.
+
+# When specified, the value of the L</contents> argument must be a
+# reference to a callback subroutine.
+# If the reference is C<$contents>,
+# L<Test::Weaken|/"NAME">'s call to it will be the equivalent
+# of C<< $contents->($safe_copy) >>,
+# where C<$safe_copy> is a copy of the probe reference to
+# a Perl data object.
+# The L</contents> callback is made once
+# for every Perl data object
+# when that Perl data object is
+# about to be examined for children.
+# This can impose a significant overhead.
+# 
+# The example of a L</contents> callback above adds data objects whenever it
+# encounters a I<reference> to a blessed object.
+# Compare this with the example for the L</ignore> callback above.
+# Checking for references to blessed objects will not produce the same
+# behavior as checking for the blessed objects themselves --
+# there may be many references to a single
+# object.
+
+
+
+# =head2 Persistent Objects
+# 
+# As a practical matter, a descendant that is not
+# part of the contents of a
+# test structure is only a problem
+# if its lifetime extends beyond that of the test
+# structure.
+# A descendant that is expected to stay around after
+# the test structure is destroyed
+# is called a B<persistent object>.
+# 
+# A persistent object is not a memory leak.
+# That's the problem.
+# L<Test::Weaken|/"NAME"> is trying to find memory leaks
+# and it looks for data objects that remain
+# after the test structure is freed.
+# But a persistent object is not expected to
+# disappear when the test structure goes away.
+# 
+# We need to
+# separate the unfreed data objects which are memory leaks,
+# from those which are persistent data objects.
+# It's usually easiest to do this after the test by
+# examining the return value of L</"unfreed_proberefs">.
+# The C<ignore> named argument can also be used
+# to pass L<Test::Weaken|/"NAME"> a closure
+# that separates out persistent data objects "on the fly".
+# These methods are described in detail
+# L<below|/"ADVANCED TECHNIQUES">.
+
+# =head2 Nieces
+# 
+# A B<niece data object> (also a B<niece object> or just a B<niece>)
+# is a data object that is part of the contents of a data 
+# structure,
+# but that is not a descendant of the top object of that
+# data structure.
+# When the OO technique called
+# "inside-out objects" is used,
+# most of the attributes of the blessed object will be
+# nieces.
+# 
+# In L<Test::Weaken|/"NAME">,
+# usually the easiest way to deal with non-descendant contents
+# is to make the
+# data structure you are trying to test
+# the B<lab rat> in a B<wrapper structure>.
+# In this scheme,
+# your test structure constructor will return a reference
+# to the top object of the wrapper structure,
+# instead of to the top object of the lab rat.
+# 
+# The top object of the wrapper structure will be a B<wrapper array>.
+# The wrapper array will contain the top object of the lab rat,
+# along with other objects.
+# The other objects need to be
+# chosen so that the contents of the 
+# wrapper array are exactly
+# the wrapper array itself, plus the contents
+# of the lab rat.
+# 
+# It is not always easy to find the right objects to put into the wrapper array.
+# For example, determining the contents of the lab rat may
+# require a recursive scan from the lab rat's
+# top object.
+# Depending on the logical structure of the lab rat,
+# this may be far from trivial.
+# 
+# As an alternative to using a wrapper,
+# it is possible to have L<Test::Weaken|/"NAME"> add
+# contents "on the fly," while it is scanning the lab rat.
+# This can be done using L<the C<contents> named argument|/contents>,
+# which takes a closure as its value.
+
+# =head2 Data Objects, Blessed Objects and Structures
+# 
+# B<Object> is a heavily overloaded term in the Perl world.
+# This document will use the term B<Perl data object>
+# or B<data object> to refer to any referenceable Perl datum,
+# including
+# scalars, arrays, hashes, references themselves, and code objects.
+# The full list of types of referenceable Perl data objects
+# is given in
+# L<the description of the ref builtin in the Perl documentation|perlfunc/"ref">.
+# An B<object> that has been blessed using the Perl
+# L<bless builtin|perlfunc/"bless">, will be called a B<blessed object>.
+# 
+# In this document,
+# a Perl B<data structure> (often just called a B<structure>)
+# is any group of Perl objects that are
+# co-mortal.
+# B<Co-mortal> means that the maintainer
+# expects those objects to be destroyed at the same time.
+# For example, if a group of Perl objects is referenced,
+# directly or indirectly,
+# through a hash,
+# and is referenced only through that hash,
+# a programmer will usually expect all of those objects
+# to be destroyed when the hash is.
+# 
+# Perl data structures can be any set of
+# Perl data objects.
+# Since the question is one of I<expected> lifetime,
+# whether an object is part of a data structure
+# is, in the last analysis, subjective.
+# 
+# =head2 The Contents of a Data Structure
+# 
+# A B<data structure> must have one object
+# that is designated as its B<top object>.
+# In most data structures, it is obvious which
+# data object should be designated as the top object.
+# The objects
+# in the data structure, including the top object,
+# are the B<contents> of that data structure.
+# 
+# L<Test::Weaken|/"NAME"> gets its B<test data structure>,
+# or B<test structure>,
+# from a closure.
+# The closure should return
+# a reference to the test structure.
+# This reference is called the B<test structure reference>.
+
+# =head2 Builtin Types
+# 
+# This document will refer to the builtin type of objects.
+# Perl's B<builtin types> are the types Perl originally gives objects,
+# as opposed to B<blessed types>, the types assigned objects by
+# the L<bless function|perlfunc/"bless">.
+# The builtin types are listed in
+# L<the description of the ref builtin in the Perl documentation|perlfunc/"ref">.
+# 
+# Perl's L<ref function|perlfunc/"ref"> returns the blessed type of its
+# argument, if the argument has been blessed into a package.
+# Otherwise the 
+# L<ref function|perlfunc/"ref"> returns the builtin type.
+# The L<Scalar::Util/reftype function> always returns the builtin type,
+# even for blessed objects.
+
+# L<Data::Dumper> does not deal with
+# IO and LVALUE objects
+# gracefully,
+# issuing a cryptic warning whenever it encounters them.
+# Since L<Data::Dumper> is a Perl core module
+# in extremely wide use, this suggests that these IO and LVALUE
+# objects are, to put it mildly,
+# not commonly encountered as the contents of data structures.
+
+
 
 #   fill-column: 100
 #
