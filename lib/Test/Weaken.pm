@@ -2,7 +2,6 @@ package Test::Weaken;
 
 
 # maybe:
-# destructor_method => 'destroy'
 # contents_funcs => arrayref of funcs
 #     multiple contents, or sub{} returning list enough ?
 # track_filehandles => 1  GLOB and IO
@@ -23,9 +22,9 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.018000';
+our $VERSION   = '3.020000';
 
-# use Smart::Comments;
+#use Smart::Comments;
 
 ### <where> Using Smart Comments ...
 
@@ -246,6 +245,9 @@ sub Test::Weaken::new {
         if (defined (my $destructor = delete $arg1->{destructor})) {
             $self->{destructor} = $destructor;
         }
+        if (defined (my $destructor_method = delete $arg1->{destructor_method})) {
+            $self->{destructor_method} = $destructor_method;
+        }
 
         if (defined (my $coderef = delete $arg1->{ignore})) {
             if (ref $coderef ne 'CODE') {
@@ -403,7 +405,15 @@ sub Test::Weaken::test {
     }
 
     # Now free everything.
-    $destructor->( map {$$_} @test_object_probe_list ) if defined $destructor;
+    if (defined (my $destructor_method = $self->{destructor_method})) {
+        foreach my $test_object_probe (@test_object_probe_list) {
+            my $obj = $$test_object_probe;
+            $obj->$destructor_method;
+        }
+    }
+    if (defined $destructor) {
+        $destructor->( map {$$_} @test_object_probe_list ) ;
+    }
 
     @test_object_probe_list = ();
 
@@ -731,13 +741,13 @@ contents examined,
 
     ARRAY       each of its values
     HASH        each of its values
-    SCALAR      if a reference then the target object
+    SCALAR      if a reference then the target thing
     CODE        no contents as yet
     tie ANY     the associated tie object from tied()
 
 In an array or hash each scalar value has an independent existence and
-C<Test::Weaken> tracks each individually.  See L</Array and Hash Keys and
-Values> below.
+C<Test::Weaken> tracks each individually (see L</Array and Hash Keys and
+Values> below).
 
 C<CODE> objects, ie. subroutines, are not examined for children.  This is a
 limitation, because closures do hold internal references to data objects.
@@ -864,19 +874,24 @@ sub-parts.)
 
 =item C<destructor =E<gt> $coderef>
 
-The optional C<destructor> argument is called just before C<Test::Weaken>
-tries to free everything.  Some test objects or structures may require some
-sort of explicit destruction action when they're to be freed.
+=item C<destructor_method =E<gt> $methodname>
 
-    leaks ({ constructor => sub { Foo->new },
+An optional destructor is called just before C<Test::Weaken> tries to free
+everything.  Some test objects or structures might require explicit
+destruction when they're to be freed.
+
+C<destructor> is called with the objects returned by the constructor
+
+    &$destructor ($obj, ...)
+
+For example,
+
+    leaks ({ constructor => sub { return make_some_thing() },
              destructor  => sub {
-                              my ($foo) = @_;
-                              $foo->destroy;
+                              my ($thing) = @_;
+                              delete $thing->{'circular_ref'};
                             },
           });
-
-If the C<constructor> returns multiple values then they're all passed to the
-C<destructor>.  The return value from C<destructor> is ignored.
 
 For "short form" the destructor is an optional second argument,
 
@@ -885,6 +900,27 @@ For "short form" the destructor is an optional second argument,
              my ($foo) = @_;
              $foo->destroy;
            });
+
+C<destructor_method> is called as a method on each object returned by the
+constructor,
+
+    $obj->$methodname();
+
+For example if the constructed object (or objects) require an explicit
+C<$foo-E<gt>destroy()> then
+
+    leaks ({ constructor => sub { Foo->new },
+             destructor_method => 'destroy' });
+
+If both C<destructor> and C<destructor_method> are given then
+C<destructor_method> calls are first, then C<destructor>.
+
+An explicit destructor may be needed for things like toplevel windows in GUI
+toolkits such as Wx and Gtk (and perhaps also some main loop iterations if
+actual destruction is delayed).  Some object-oriented tree structures may
+need explicit destruction too if parent and child nodes keep hard references
+to each other (it's usually more convenient if child-E<gt>parent is only a
+weak reference).
 
 =item C<ignore =E<gt> $coderef>
 
@@ -950,9 +986,9 @@ Objects are checked with
 
     blessed($ref) && $ref->isa($classname)
 
-which reaches any class-specific C<isa()> in the object.  That allows
-classes to masquerade or have a dynamic "isa".  Doing so is unusual but
-normally fine and can be highly desirable in things like lazy loaders.
+which reaches any class-specific C<isa()> in the object in the usual way.
+That allows classes to masquerade or have a dynamic "isa".  That's normally
+fine and can be highly desirable in things like lazy loaders.
 
 C<ignore_object> and C<ignore_objects> ignore the particular things referred
 to by the each given C<$ref>.  For example,
@@ -1267,36 +1303,36 @@ and extracting the IO from any GLOB encountered,
          tracked_types => [ 'GLOB', 'IO' ],
        });
 
-It's good to check the IO too since it's possible a reference elsewhere
-could keep it alive, in particular a Perl-level "dup" can make another
-handle GLOB pointing to that same IO,
+It's good to check the IO too since it's possible for a reference elsewhere
+to keep it alive, in particular a Perl-level "dup" can make another handle
+GLOB pointing to that same IO,
 
     open my $dupfh, '<', $fh;
     # $dupfh holds and uses *$fh{IO}
 
 See L<Test::Weaken::ExtraBits> for such a C<contents_glob_IO()>, if you want
-to use it from a module rather than copying this couple of lines.
+to use a module rather than copying couple of lines for that function.
 
 =head2 Array and Hash Keys and Values
 
 As noted above each value in a hash or array is a separate scalar and is
-tracked separately.  Usually their only use is the containing hash or array,
-but it's possible to hold a reference to a particular element, which
-C<leaks()> can notice causing it to be unfreed.
+tracked separately.  Usually such scalars are only used in their containing
+hash or array, but it's possible to hold a reference to a particular element
+and C<leaks()> can notice if that causes it to be unfreed.
 
     my %hash = (foo => 123);
     my $ref = \$hash{'foo'};  # ref to hash value
 
 It's possible to put specific scalars as the values in a hash or array.
 They might be globals or whatever.  Usually that would arise from XSUB code,
-or see L<Array::RefElem> for similar trickery from Perl code,
+but L<Array::RefElem> can do the same from Perl code,
 
     use Array::RefElem 'av_store';
     my $global;
     my @array;
     av_store (@array, 0, $global);
 
-In XSUB code a little care is needed that the refcounts is correct after any
+In XSUB code a little care is needed that refcounts are correct after
 C<av_store()> or C<hv_store()> takes ownership of one count etc.  In all
 cases C<Test::Weaken> can notice when an array or hash element doesn't
 destroy with its container.  C<ignore> etc will be needed for those which
@@ -1307,9 +1343,9 @@ hash and there's nothing separate for C<Test::Weaken> to track.
 
 L<Tie::RefHash> and similar which allow arbitrary objects as keys of a hash
 do so by using the object C<refaddr()> internally as the string key but
-presenting the object from C<keys()>, C<each()>, etc.  As of L<Tie::RefHash>
-1.39 and L<Tie::RefHash::Weak> 0.09 those two modules hold the key objects
-within their tie object and therefore those key objects are reached by
+presenting objects in C<keys()>, C<each()>, etc.  As of L<Tie::RefHash> 1.39
+and L<Tie::RefHash::Weak> 0.09 those two modules hold the key objects within
+their tie object and therefore those key objects are successfully reached by
 C<Test::Weaken> for leak checking in the usual way.
 
 =head2 Tracing Leaks

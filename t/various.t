@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 51;
+use Test::More tests => 58;
 use Test::Weaken;
 
 # uncomment this to run the ### lines
@@ -57,6 +57,7 @@ use Test::Weaken;
 }
 
 
+# destructor called on multiple constructor values
 {
   my $destructor_called;
   Test::Weaken::leaks(
@@ -71,6 +72,51 @@ use Test::Weaken;
                      );
   ok ($destructor_called);
 }
+
+#------------------------------------------------------------------------------
+# destructor_method calls
+
+{
+  my $my_destroy_called;
+  my @my_destroy_objects;
+  { package MyDestructorMethod;
+    sub new {
+      my $class = shift;
+      return bless { @_ }, $class;
+    }
+    sub my_destroy {
+      my ($self) = @_;
+      Test::More::is (scalar(@_), 1, 'my_destroy() called with 1 value');
+      $my_destroy_called++;
+      push @my_destroy_objects, $self->{'n'};
+    }
+  }
+
+  # destructor_method called
+  {
+    $my_destroy_called = 0;
+    Test::Weaken::leaks({ constructor => sub {
+                            return MyDestructorMethod->new;
+                          },
+                          destructor_method => 'my_destroy'});
+    is ($my_destroy_called, 1);
+  }
+
+  # destructor_method called on each constructor return
+  {
+    $my_destroy_called = 0;
+    @my_destroy_objects = ();
+    Test::Weaken::leaks({ constructor => sub {
+                            return (MyDestructorMethod->new(n=>1),
+                                    MyDestructorMethod->new(n=>2),
+                                    MyDestructorMethod->new(n=>3));
+                          },
+                          destructor_method => 'my_destroy'});
+    is ($my_destroy_called, 3);
+    is_deeply (\@my_destroy_objects, [1,2,3]);
+  }
+}
+
 
 #------------------------------------------------------------------------------
 # GLOB not tracked by default, but can be requested

@@ -23,4 +23,9 @@ WriteMakefile(
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     # clean               => { FILES => 'Test-Weaken-*' },
     SIGN                => 1,
+
+    META_MERGE =>
+    { no_index => { directory=>['sandbox'],
+                  },
+    },
 );

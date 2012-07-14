@@ -18,10 +18,14 @@ MANIFEST			This list of files
 MANIFEST.SKIP
 META.yml
 README
+sandbox/coderef.pl
 sandbox/dot.pl
 sandbox/elements.pl
+sandbox/html-tree.pl
 sandbox/ignore.pl
+sandbox/misc.pl
 sandbox/reftypes.pl
+sandbox/scalar-util-instance.pl
 sandbox/tied.pl
 SIGNATURE
 t/00-load.t

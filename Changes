@@ -1,6 +1,9 @@
 Revision history for Test-Weaken
 
-3.018000 May 2012
+3.020000 July 2012
+       * new destructor_method option
+
+3.018000 June 2012
        * new options ignore_preds, ignore_object, ignore_objects
 
 3.016000 May 2012
