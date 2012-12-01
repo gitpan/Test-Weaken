@@ -93,6 +93,9 @@ BEGIN {
 use lib 't/lib';
 use Test::Weaken::Test;
 
+#------------------------------------------------------------------------------
+# ignore option
+
 ## use Marpa::Test::Display ignore snippet
 
 sub ignore_my_global {
@@ -100,54 +103,29 @@ sub ignore_my_global {
     return ( Scalar::Util::blessed($probe) && $probe->isa('MyGlobal') );
 }
 
-my $tester = Test::Weaken::leaks(
-    {   constructor => sub { MyObject->new() },
-        ignore      => \&ignore_my_global,
-    }
-);
-
-## no Marpa::Test::Display
-
-if ( not $tester ) {
-    Test::More::pass('good ignore');
+{
+  my $tester = Test::Weaken::leaks({ constructor => sub { MyObject->new() },
+                                     ignore      => \&ignore_my_global,
+                                   });
+  is ($tester, undef,
+      'ignore of ignore_my_global() ignores everything');
 }
-else {
-    Test::Weaken::Test::is( $tester->unfreed_proberefs, q{}, 'good ignore' );
+{
+  # This test previously looked at all the $tester->unfreed_proberefs(), but
+  # think it's enough to just ask that this form results in some unfreed
+  # whereas ignore_my_global() above does not.
+
+  my $tester = Test::Weaken::leaks({ constructor => sub { MyObject->new() },
+                                     ignore      => sub { return; }
+                                   });
+  ok ($tester, 'ignore of always false leaves unfreed');
 }
 
-$tester = Test::Weaken::leaks(
-    {   constructor => sub { MyObject->new() },
-        ignore      => sub { return; }
-    }
-);
-Test::Weaken::Test::is( Data::Dumper::Dumper( $tester->unfreed_proberefs ),
-    <<'EOS', 'no-op ignore' );
-$VAR1 = [
-          bless( {
-                   'array' => [
-                                'something for ereskigal'
-                              ],
-                   'name' => 'ereskigal'
-                 }, 'MyGlobal' ),
-          \$VAR1->[0]{'array'},
-          \$VAR1->[0]{'name'},
-          $VAR1->[0]{'array'},
-          \$VAR1->[0]{'array'}[0],
-          bless( {
-                   'array' => [
-                                'something for ishtar'
-                              ],
-                   'name' => 'ishtar'
-                 }, 'MyGlobal' ),
-          \$VAR1->[5]{'array'},
-          \$VAR1->[5]{'name'},
-          $VAR1->[5]{'array'},
-          \$VAR1->[5]{'array'}[0]
-        ];
-EOS
+#------------------------------------------------------------------------------
+# ignore option with check_ignore() wrapper
 
 ## use Marpa::Test::Display check_ignore 1 arg snippet
-$tester = Test::Weaken::leaks(
+my $tester = Test::Weaken::leaks(
     {   constructor => sub { MyObject->new() },
         ignore => Test::Weaken::check_ignore( \&ignore_my_global ),
     }

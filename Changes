@@ -1,5 +1,8 @@
 Revision history for Test-Weaken
 
+3.022000 December 2012
+       * tests ignore.t don't depend on proberef order
+
 3.020000 July 2012
        * new destructor_method option
 

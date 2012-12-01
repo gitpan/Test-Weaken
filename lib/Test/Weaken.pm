@@ -22,7 +22,7 @@ require Exporter;
 
 use base qw(Exporter);
 our @EXPORT_OK = qw(leaks poof);
-our $VERSION   = '3.020000';
+our $VERSION   = '3.022000';
 
 #use Smart::Comments;
 
@@ -919,8 +919,8 @@ An explicit destructor may be needed for things like toplevel windows in GUI
 toolkits such as Wx and Gtk (and perhaps also some main loop iterations if
 actual destruction is delayed).  Some object-oriented tree structures may
 need explicit destruction too if parent and child nodes keep hard references
-to each other (it's usually more convenient if child-E<gt>parent is only a
-weak reference).
+to each other, though it's usually more convenient if child-E<gt>parent is
+only a weak reference.  (See also L<Object::Destroyer>.)
 
 =item C<ignore =E<gt> $coderef>
 
